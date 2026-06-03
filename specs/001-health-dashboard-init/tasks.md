@@ -60,5 +60,5 @@
 - [x] T016 Set real `MONGODB_URI` in `.env.local` and confirm `npm run dev` starts without errors ✅ 2026-06-03
 - [x] T017 Run T008 / T010 / T012 verification steps (curl tests against local dev server) ✅ 2026-06-03
 - [x] T018 Deploy to Vercel: import GitHub repo, set `MONGODB_URI` env var, confirm production build ✅ 2026-06-03
-- [ ] T019 Run `speckit.checklist` constitution compliance review ⬅ **Copilot — after T017 passes**
-- [ ] T020 Open PR: `001-health-dashboard-init` → `main` and merge ⬅ **YOU — after T019 passes**
+- [x] T019 Run `speckit.checklist` constitution compliance review ✅ 2026-06-04
+- [x] T020 Merged `001-health-dashboard-init` → `main` and deployed to Vercel production ✅ 2026-06-04
