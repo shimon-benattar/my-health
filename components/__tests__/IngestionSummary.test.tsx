@@ -39,10 +39,10 @@ describe("IngestionSummary", () => {
     expect(screen.getByTestId("skipped-count")).toHaveTextContent("3");
   });
 
-  it("renders Go to Dashboard link pointing to /", () => {
+  it("renders Go to Dashboard link pointing to /dashboard", () => {
     render(<IngestionSummary result={BASE} />);
     const link = screen.getByTestId("dashboard-link");
-    expect(link).toHaveAttribute("href", "/");
+    expect(link).toHaveAttribute("href", "/dashboard");
     expect(link).toHaveTextContent(/go to dashboard/i);
   });
 

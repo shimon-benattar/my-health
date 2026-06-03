@@ -46,7 +46,7 @@ export default function IngestionSummary({ result }: Props) {
         )}
       </ul>
       <Link
-        href="/"
+        href="/dashboard"
         data-testid="dashboard-link"
         className="mt-3 inline-block font-medium underline hover:text-green-900"
       >

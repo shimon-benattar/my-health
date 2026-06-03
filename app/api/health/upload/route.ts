@@ -13,6 +13,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      return NextResponse.json({ error: "Only CSV files are accepted" }, { status: 400 });
+    }
+
     const csvText = await file.text();
     const { entries, skipped } = parseCSV(csvText);
 
@@ -29,7 +33,7 @@ export async function POST(request: NextRequest) {
       const result = await HealthEntry.findOneAndUpdate(
         { date: entry.date },
         { $set: entry },
-        { upsert: true, new: false, lean: true }
+        { upsert: true, returnDocument: "before", lean: true }
       );
 
       if (result === null) {

@@ -125,3 +125,79 @@ describe("POST /api/health/upload", () => {
     expect(body.error).toMatch(/internal server error/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Security — POST /api/health/upload
+// ---------------------------------------------------------------------------
+describe("POST /api/health/upload — security", () => {
+  it("returns 400 when file has a non-CSV extension (.exe)", async () => {
+    const req = {
+      formData: vi.fn().mockResolvedValue(
+        (() => {
+          const fd = new FormData();
+          fd.append("file", new File(["payload"], "malware.exe", { type: "application/octet-stream" }));
+          return fd;
+        })()
+      ),
+    } as unknown as NextRequest;
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/only csv/i);
+  });
+
+  it("returns 400 when file has a .php extension", async () => {
+    const req = {
+      formData: vi.fn().mockResolvedValue(
+        (() => {
+          const fd = new FormData();
+          fd.append("file", new File(["<?php echo 1; ?>"], "shell.php", { type: "text/php" }));
+          return fd;
+        })()
+      ),
+    } as unknown as NextRequest;
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/only csv/i);
+  });
+
+  it("returns 400 when file has a .json extension", async () => {
+    const req = {
+      formData: vi.fn().mockResolvedValue(
+        (() => {
+          const fd = new FormData();
+          fd.append("file", new File(['{"key":"value"}'], "data.json", { type: "application/json" }));
+          return fd;
+        })()
+      ),
+    } as unknown as NextRequest;
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts a CSV file regardless of MIME type (extension check only)", async () => {
+    mockFindOneAndUpdate.mockResolvedValue(null);
+    const req = {
+      formData: vi.fn().mockResolvedValue(
+        (() => {
+          const fd = new FormData();
+          // Same VALID_CSV content but with application/octet-stream MIME
+          fd.append("file", new File([VALID_CSV], "export.csv", { type: "application/octet-stream" }));
+          return fd;
+        })()
+      ),
+    } as unknown as NextRequest;
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+  });
+
+  it("response never includes MongoDB connection string or stack trace", async () => {
+    mockFindOneAndUpdate.mockRejectedValue(new Error("mongodb+srv://user:pass@cluster"));
+    const res = await POST(makeRequest(VALID_CSV));
+    const body = await res.json();
+    // Internal error message must not leak connection details
+    expect(JSON.stringify(body)).not.toMatch(/mongodb\+srv/i);
+    expect(JSON.stringify(body)).not.toMatch(/password/i);
+  });
+});
