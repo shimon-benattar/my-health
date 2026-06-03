@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import clientPromise from "@/lib/db";
+import { connectDB } from "@/lib/db";
 import HealthEntry from "@/lib/models/HealthEntry";
 import { parseCSV } from "@/lib/parsers/csvParser";
 
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No valid rows found in CSV" }, { status: 422 });
     }
 
-    await clientPromise;
+    await connectDB();
 
     let inserted = 0;
     let updated = 0;

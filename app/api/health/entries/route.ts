@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import clientPromise from "@/lib/db";
+import { connectDB } from "@/lib/db";
 import HealthEntry from "@/lib/models/HealthEntry";
 
 export async function GET() {
   try {
-    await clientPromise;
+    await connectDB();
 
     const entries = await HealthEntry.find({})
       .sort({ date: -1 })
