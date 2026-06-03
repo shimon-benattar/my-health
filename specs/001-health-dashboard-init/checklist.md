@@ -11,7 +11,7 @@
 - [x] CHK001 `spec.md` exists and was reviewed + approved before any implementation file was written
 - [x] CHK002 `plan.md` exists with a filled Constitution Check section (all 5 gates ✅)
 - [x] CHK003 `tasks.md` exists with tasks ordered by dependency and phase
-- [ ] CHK004 All verification tasks (T008, T010, T012) are marked `[x]` before merge ⬅ **blocks merge**
+- [x] CHK004 All verification tasks (T008, T010, T012) are marked `[x]` before merge ✅ 2026-06-03
 
 ## II. Type-Safe Pipeline
 
@@ -27,7 +27,7 @@
 - [x] CHK011 Match key is `{ date: entry.date }` — the unique-indexed field
 - [x] CHK012 `$set` operator overwrites all mutable fields (not `$setOnInsert` or partial updates)
 - [x] CHK013 Mongoose schema declares `date` field with `unique: true` and `index: true`
-- [ ] CHK014 T010 verified: two sequential uploads produce `inserted:32/updated:0/skipped:0` then `inserted:0/updated:0/skipped:32` ⬅ **blocks merge**
+- [x] CHK014 T010 verified: two sequential uploads produce `inserted:32/updated:0/skipped:0` then `inserted:0/updated:0/skipped:32` ✅ 2026-06-03
 
 ## IV. Free-Tier Compliance
 

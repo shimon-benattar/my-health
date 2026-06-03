@@ -9,10 +9,13 @@ function isEmpty(raw: string): boolean {
   return !raw || raw.trim() === "" || raw.trim() === "-";
 }
 
-/** "02/05/2026" → Date(2026, 4, 2)  (month is 0-indexed) */
+/**
+ * "02/05/2026" → Date(UTC 2026-05-02T00:00:00Z)
+ * Uses Date.UTC to avoid local-timezone shifts when the server is not in UTC.
+ */
 function parseDate(raw: string): Date {
   const [day, month, year] = raw.split("/").map(Number);
-  return new Date(year, month - 1, day);
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
 /** "1,109" → 1109  |  "-" → null */
@@ -76,13 +79,13 @@ type RawRow = Record<string, string>;
 function parseRow(row: RawRow): HealthEntryInput {
   return {
     date: parseDate(row["Date"]),
-    activeCalories: parseNumber(row['"Active Calories" (kcal)'] ?? row["Active Calories (kcal)"] ?? ""),
-    cardioFitness: parseNumber(row['"Cardio Fitness" (mL/min·kg)'] ?? row["Cardio Fitness (mL/min·kg)"] ?? ""),
-    heartRate: parseRange(row['"Heart Rate" (bpm)'] ?? row["Heart Rate (bpm)"] ?? ""),
-    hrv: parseRange(row['"Heart Rate Variability" (ms)'] ?? row["Heart Rate Variability (ms)"] ?? ""),
-    restingHeartRate: parseNumber(row['"Resting Heart Rate" (bpm)'] ?? row["Resting Heart Rate (bpm)"] ?? ""),
-    sleep: parseSleep(row['"Sleep"'] ?? row["Sleep"] ?? ""),
-    steps: parseNumber(row['"Steps" (steps)'] ?? row["Steps (steps)"] ?? ""),
+    activeCalories: parseNumber(row["Active Calories (kcal)"] ?? ""),
+    cardioFitness: parseNumber(row["Cardio Fitness (mL/min·kg)"] ?? ""),
+    heartRate: parseRange(row["Heart Rate (bpm)"] ?? ""),
+    hrv: parseRange(row["Heart Rate Variability (ms)"] ?? ""),
+    restingHeartRate: parseNumber(row["Resting Heart Rate (bpm)"] ?? ""),
+    sleep: parseSleep(row["Sleep"] ?? ""),
+    steps: parseNumber(row["Steps (steps)"] ?? ""),
   };
 }
 
@@ -91,7 +94,15 @@ function parseRow(row: RawRow): HealthEntryInput {
 // ---------------------------------------------------------------------------
 
 export function parseCSV(csvText: string): HealthEntryInput[] {
-  const result = Papa.parse<RawRow>(csvText, {
+  // The Apple Health CSV export uses decorative quotes inside column header names
+  // (e.g. "Active Calories" (kcal)) which papaparse misreads as CSV field quoting,
+  // causing the entire header to collapse into one field and consuming the first
+  // data row. Fix: strip all quote characters from the header line only.
+  const lines = csvText.split(/\r?\n/);
+  const cleanedHeader = lines[0].replace(/"/g, "");
+  const cleanedCsv = [cleanedHeader, ...lines.slice(1)].join("\n");
+
+  const result = Papa.parse<RawRow>(cleanedCsv, {
     header: true,
     skipEmptyLines: true,
     transformHeader: (header) => header.trim(),
@@ -99,5 +110,5 @@ export function parseCSV(csvText: string): HealthEntryInput[] {
 
   return result.data
     .map((row) => parseRow(row))
-    .filter((entry) => !isNaN(entry.date.getTime())); // discard rows with unparseable dates
+    .filter((entry) => !isNaN(entry.date.getTime()));
 }

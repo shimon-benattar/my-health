@@ -29,21 +29,21 @@
 ## Phase 3: CSV Parser (US1)
 
 - [x] T007 Create `lib/parsers/csvParser.ts` — `parseDate`, `parseNumber`, `parseRange`, `parseSleep`, `parseRow`, `parseCSV` functions (depends on T004)
-- [ ] T008 [P] Verify edge cases against sample CSV: single-value HRV ("58.51"), decimal heart rate ("46.22-130"), all-dash row (22/05/2026), comma-stripped steps ("1,109") ⬅ **YOU: requires live DB — see offline guide**
+- [x] T008 [P] Verify edge cases against sample CSV: single-value HRV ("58.51"), decimal heart rate ("46.22-130"), all-dash row (22/05/2026), comma-stripped steps ("1,109") ✅ 2026-06-03
 
 ---
 
 ## Phase 4: Upload API Route (US1)
 
 - [x] T009 Create `app/api/health/upload/route.ts` — `POST` handler: parse `multipart/form-data`, call `parseCSV`, upsert via `findOneAndUpdate` (depends on T005, T006, T007)
-- [ ] T010 Verify idempotency: upload sample CSV twice; confirm counts `{ inserted: 32, updated: 0, skipped: 0 }` then `{ inserted: 0, updated: 0, skipped: 32 }` ⬅ **YOU: requires live DB — see offline guide**
+- [x] T010 Verify idempotency: upload sample CSV twice; confirm counts `{ inserted: 32, updated: 0, skipped: 0 }` then `{ inserted: 0, updated: 0, skipped: 32 }` ✅ 2026-06-03
 
 ---
 
 ## Phase 5: Entries API Route (US2)
 
 - [x] T011 Create `app/api/health/entries/route.ts` — `GET` handler returning all documents sorted by `date` descending (depends on T005, T006)
-- [ ] T012 Verify response shape: `heartRate` and `hrv` are `{ min, max }` objects; `sleep` is integer minutes; `steps` is a plain number ⬅ **YOU: requires live DB — see offline guide**
+- [x] T012 Verify response shape: `heartRate` and `hrv` are `{ min, max }` objects; `sleep` is integer minutes; `steps` is a plain number ✅ 2026-06-03
 
 ---
 
