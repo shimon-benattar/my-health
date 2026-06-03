@@ -1,18 +1,14 @@
 "use client";
 
 import { useState, useRef } from "react";
-
-interface UploadResult {
-  inserted: number;
-  updated: number;
-  skipped: number;
-}
+import IngestionSummary from "@/components/IngestionSummary";
+import type { IngestionResult } from "@/types/health";
 
 export default function UploadForm() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [status, setStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
-  const [result, setResult] = useState<UploadResult | null>(null);
+  const [result, setResult] = useState<IngestionResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -45,7 +41,7 @@ export default function UploadForm() {
         throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
       }
 
-      const data: UploadResult = await res.json();
+      const data: IngestionResult = await res.json();
       setResult(data);
       setStatus("success");
       setSelectedFile(null);
@@ -94,16 +90,7 @@ export default function UploadForm() {
         </button>
       </form>
 
-      {status === "success" && result && (
-        <div className="mt-4 rounded-md bg-green-50 p-4 text-sm text-green-800" role="status">
-          <p className="font-semibold">Upload complete</p>
-          <ul className="mt-1 list-inside list-disc">
-            <li>Inserted: {result.inserted}</li>
-            <li>Updated: {result.updated}</li>
-            <li>Skipped (no change): {result.skipped}</li>
-          </ul>
-        </div>
-      )}
+      {status === "success" && result && <IngestionSummary result={result} />}
 
       {status === "error" && (
         <div className="mt-4 rounded-md bg-red-50 p-4 text-sm text-red-800" role="alert">

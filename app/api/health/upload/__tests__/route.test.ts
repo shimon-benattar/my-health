@@ -76,10 +76,11 @@ describe("POST /api/health/upload", () => {
     expect(body.inserted).toBe(2);
     expect(body.updated).toBe(0);
     expect(body.skipped).toBe(0);
+    expect(body.dateRange).toEqual({ from: "2026-05-02", to: "2026-05-03" });
   });
 
-  it("returns 200 with skipped count for unchanged rows (idempotency)", async () => {
-    // findOneAndUpdate returns the existing doc — same data → skipped
+  it("returns 200 with updated count for existing rows (always overrides)", async () => {
+    // findOneAndUpdate returns existing doc → always updated
     mockFindOneAndUpdate.mockResolvedValue({
       activeCalories: 449,
       cardioFitness: null,
@@ -96,30 +97,24 @@ describe("POST /api/health/upload", () => {
     const res = await POST(makeRequest(singleRowCsv));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.skipped).toBe(1);
+    expect(body.updated).toBe(1);
     expect(body.inserted).toBe(0);
-    expect(body.updated).toBe(0);
+    expect(body.skipped).toBe(0);
+    expect(body.dateRange).toEqual({ from: "2026-05-02", to: "2026-05-02" });
   });
 
-  it("returns 200 with updated count when data changes", async () => {
-    // Existing doc has different steps
-    mockFindOneAndUpdate.mockResolvedValue({
-      activeCalories: 449,
-      cardioFitness: null,
-      restingHeartRate: 52,
-      sleep: 308,
-      steps: 9999, // different!
-    });
+  it("returns 200 with mix of inserted and updated for partial overlap", async () => {
+    // First row exists, second is new
+    mockFindOneAndUpdate
+      .mockResolvedValueOnce({ activeCalories: 449 }) // existing → updated
+      .mockResolvedValueOnce(null);                   // new → inserted
 
-    const singleRowCsv = [
-      `"Date","Active Calories" (kcal),"Cardio Fitness" (mL/min·kg),"Heart Rate" (bpm),"Heart Rate Variability" (ms),"Resting Heart Rate" (bpm),"Sleep","Steps" (steps)`,
-      `02/05/2026,449,-,46-105,21.55-64.63,52,5h 8m,6313`,
-    ].join("\n");
-
-    const res = await POST(makeRequest(singleRowCsv));
+    const res = await POST(makeRequest(VALID_CSV));
     expect(res.status).toBe(200);
     const body = await res.json();
+    expect(body.inserted).toBe(1);
     expect(body.updated).toBe(1);
+    expect(body.dateRange).toEqual({ from: "2026-05-02", to: "2026-05-03" });
   });
 
   it("returns 500 on unexpected DB error", async () => {

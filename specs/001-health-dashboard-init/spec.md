@@ -54,6 +54,22 @@ A user can upload a CSV file from the browser using a simple form on the dashboa
 
 ---
 
+### User Story 4 — Ingestion Summary (Priority: P3)
+
+After a successful upload, the user sees a structured summary of the ingestion result: how many records were processed, the date range covered, and any rows that were skipped due to invalid data. A "Go to Dashboard" link provides a clear next step.
+
+**Why this priority**: Improves upload UX without blocking core functionality; the API already returns sufficient data.
+
+**Independent Test**: Upload the sample CSV and verify the `IngestionSummary` component renders the correct counts, the date range `02 May 2026 → 02 Jun 2026`, and the "Go to Dashboard" link.
+
+**Acceptance Scenarios**:
+
+1. **Given** a successful upload response, **When** the summary renders, **Then** it shows total records (inserted + updated), a formatted date range, and a "Go to Dashboard" link.
+2. **Given** a CSV with one unparseable date row, **When** the summary renders, **Then** the skipped-row count is shown.
+3. **Given** all rows are valid (skipped = 0), **When** the summary renders, **Then** the skipped section is hidden.
+
+---
+
 ### Edge Cases
 
 - What happens when a row has a Heart Rate value of `"46.22-130"` (decimal min, integer max)? → `parseRange` splits on `-` and parses each side with `parseFloat`.
@@ -68,8 +84,10 @@ A user can upload a CSV file from the browser using a simple form on the dashboa
 - `POST /api/health/upload` accepts `multipart/form-data` with a `file` field containing a CSV.
 - All 8 target fields must be parsed according to the transformation rules specified in the constitution.
 - Writes use `findOneAndUpdate` with `{ upsert: true }` on the `date` unique index.
+- Upload response includes `{ inserted, updated, skipped, dateRange: { from, to } | null }`.
 - `GET /api/health/entries` returns all documents sorted by `date` descending as JSON.
-- The `UploadForm` component submits the file and renders the server response counts.
+- The `UploadForm` component submits the file and renders `IngestionSummary` on success.
+- `IngestionSummary` displays total records processed, the date range, skipped-row count (when > 0), and a "Go to Dashboard" link.
 
 ### Non-Functional
 - TypeScript `strict` mode: no `any` in the data pipeline.

@@ -13,3 +13,10 @@ export interface HealthEntryInput {
   sleep: number | null; // total minutes
   steps: number | null;
 }
+
+export interface IngestionResult {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  dateRange: { from: string; to: string } | null;
+}

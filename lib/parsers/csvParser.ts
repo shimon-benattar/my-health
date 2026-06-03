@@ -93,7 +93,7 @@ function parseRow(row: RawRow): HealthEntryInput {
 // Public API
 // ---------------------------------------------------------------------------
 
-export function parseCSV(csvText: string): HealthEntryInput[] {
+export function parseCSV(csvText: string): { entries: HealthEntryInput[]; skipped: number } {
   // The Apple Health CSV export uses decorative quotes inside column header names
   // (e.g. "Active Calories" (kcal)) which papaparse misreads as CSV field quoting,
   // causing the entire header to collapse into one field and consuming the first
@@ -108,7 +108,7 @@ export function parseCSV(csvText: string): HealthEntryInput[] {
     transformHeader: (header) => header.trim(),
   });
 
-  return result.data
-    .map((row) => parseRow(row))
-    .filter((entry) => !isNaN(entry.date.getTime()));
+  const allRows = result.data.map((row) => parseRow(row));
+  const entries = allRows.filter((entry) => !isNaN(entry.date.getTime()));
+  return { entries, skipped: allRows.length - entries.length };
 }

@@ -26,10 +26,11 @@ Ingests Apple Health CSV exports, stores parsed data, exposes REST API.
 - No `any` or `as unknown` casts without an explanatory comment.
 - All shared types live in `types/health.ts`.
 
-### 4 — Idempotent ingestion
-- Re-uploading the same CSV must produce `inserted:0, updated:0, skipped:N`.
+### 4 — Ingestion behaviour
 - Deduplication key is `date` (unique index on MongoDB collection).
-- `upsert: true` + field-level diff decides `updated` vs `skipped`.
+- `upsert: true` — new rows → `inserted`, existing rows → **always overwritten** → `updated`.
+- Re-uploading the same CSV is safe; all rows will be counted as `updated`.
+- All metrics (`Steps`, `Calories`, etc.) must be cast to `Number`; `-` or empty values map to `null`.
 
 ### 5 — Date handling
 - All dates stored as **midnight UTC** using `Date.UTC(year, month-1, day)`.
@@ -61,6 +62,12 @@ Ingests Apple Health CSV exports, stores parsed data, exposes REST API.
 - `MONGODB_URI` is required at runtime. Validated inside `connectDB()`, not at module load.
 - Never throw env errors at module import time (breaks `next build`).
 - Secrets go in `.env.local` (gitignored). Add to Vercel dashboard for Production + Preview.
+
+### 11 — Standard patterns
+- **Database:** Always use Mongoose `upsert` with `{ date: ... }` as the unique index.
+- **Parsing:** Use `papaparse` for all CSV ingestion.
+- **Data types:** All metrics must be cast to `Number` and validated against `-` or `null` before storage.
+- **Logging:** All API routes must include structured `console.error` / `console.log` telemetry to aid Vercel production debugging (prefix with `[route-name]`).
 
 ---
 

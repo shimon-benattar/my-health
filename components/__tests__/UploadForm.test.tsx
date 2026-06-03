@@ -60,8 +60,8 @@ describe("UploadForm file selection", () => {
 // Successful upload
 // ---------------------------------------------------------------------------
 describe("UploadForm successful upload", () => {
-  it("shows inserted/updated/skipped counts on success", async () => {
-    mockFetch({ inserted: 32, updated: 0, skipped: 0 });
+  it("shows ingestion summary on success", async () => {
+    mockFetch({ inserted: 32, updated: 0, skipped: 0, dateRange: { from: "2026-05-02", to: "2026-06-02" } });
     render(<UploadForm />);
 
     const input = screen.getByTestId("file-input");
@@ -71,13 +71,13 @@ describe("UploadForm successful upload", () => {
     await waitFor(() => {
       expect(screen.getByRole("status")).toBeInTheDocument();
     });
-    expect(screen.getByText(/inserted: 32/i)).toBeInTheDocument();
-    expect(screen.getByText(/updated: 0/i)).toBeInTheDocument();
-    expect(screen.getByText(/skipped.*no change.*: 0/i)).toBeInTheDocument();
+    expect(screen.getByTestId("total-count")).toHaveTextContent("32");
+    expect(screen.getByTestId("date-range")).toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-link")).toBeInTheDocument();
   });
 
   it("resets filename after successful upload", async () => {
-    mockFetch({ inserted: 1, updated: 0, skipped: 0 });
+    mockFetch({ inserted: 1, updated: 0, skipped: 0, dateRange: { from: "2026-05-02", to: "2026-05-02" } });
     render(<UploadForm />);
 
     const input = screen.getByTestId("file-input");
@@ -89,7 +89,7 @@ describe("UploadForm successful upload", () => {
   });
 
   it("calls POST /api/health/upload with multipart form data", async () => {
-    mockFetch({ inserted: 1, updated: 0, skipped: 0 });
+    mockFetch({ inserted: 1, updated: 0, skipped: 0, dateRange: { from: "2026-05-02", to: "2026-05-02" } });
     render(<UploadForm />);
 
     const input = screen.getByTestId("file-input");
