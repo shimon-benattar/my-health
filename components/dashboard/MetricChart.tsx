@@ -47,7 +47,10 @@ export default function MetricChart({ title, tooltipKey, data, unit = "", varian
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm" data-testid="metric-chart">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+          <p className="text-xs text-gray-500">Unit: {unit || "n/a"}</p>
+        </div>
         <TooltipInfo title={title} content={TOOLTIP_CONTENT[tooltipKey]} />
       </div>
 

@@ -22,10 +22,14 @@ function rollingAverage(values: number[], windowSize = 3): number[] {
 export default function SportSection({ sport, sessions, isMock, granularity, mode }: Props) {
   const totalCalories = sessions.reduce((acc, s) => acc + s.calories, 0);
   const totalSteps = sessions.reduce((acc, s) => acc + s.steps, 0);
+  const totalDuration = sessions.reduce((acc, s) => acc + (s.durationMinutes ?? 0), 0);
   const loadLabel = sport === "Running" ? "Aerobic Endurance" : "Explosive Interval";
   const averagePeak = sessions.length > 0
     ? Math.round(sessions.reduce((acc, s) => acc + s.peakHeartRate, 0) / sessions.length)
     : null;
+  const averageDuration = sessions.length > 0 ? Math.round(totalDuration / sessions.length) : null;
+  const stepsPerMinute = totalDuration > 0 ? Math.round(totalSteps / totalDuration) : null;
+  const calorieRate = totalDuration > 0 ? Math.round((totalCalories / totalDuration) * 10) / 10 : null;
 
   const peakPoints: MetricPoint[] = sessions.map((s) => ({ label: s.date, value: s.peakHeartRate }));
   const rolling = rollingAverage(sessions.map((s) => s.peakHeartRate));
@@ -58,16 +62,32 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
         </div>
       </div>
 
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-lg bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-gray-500">Avg Duration</p>
+          <p className="mt-1 text-lg font-semibold text-gray-900">{averageDuration ?? "-"} min</p>
+        </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-gray-500">Steps / Min</p>
+          <p className="mt-1 text-lg font-semibold text-gray-900">{stepsPerMinute ?? "-"}</p>
+        </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-gray-500">Calories / Min</p>
+          <p className="mt-1 text-lg font-semibold text-gray-900">{calorieRate ?? "-"}</p>
+        </div>
+      </div>
+
       <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900" data-testid="sport-summary-text">
         {sport === "Running" ? (
           <p>
             Running sessions: {sessions.length}. Average peak HR: {averagePeak ?? "-"} bpm.
-            This reflects your aerobic load profile. Speed/pace cannot be derived from current CSV because distance data is not exported in this file.
+            Average duration: {averageDuration ?? "-"} min. Steps/min is a useful proxy for turnover and running economy.
+            This CSV does not include distance, so pace cannot be computed yet.
           </p>
         ) : (
           <p>
             {sport} sessions: {sessions.length}. Average peak HR: {averagePeak ?? "-"} bpm.
-            This view emphasizes interval-style intensity and session frequency.
+            Average duration: {averageDuration ?? "-"} min. This view emphasizes interval-style intensity, load density, and session frequency.
           </p>
         )}
       </div>

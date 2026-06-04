@@ -41,7 +41,8 @@ function getBucketLabel(date: Date, granularity: Granularity): string {
 export function aggregateSeries(
   data: MetricPoint[],
   granularity: Granularity,
-  mode: AggregationMode
+  mode: AggregationMode,
+  options?: { trimPartialEdges?: boolean }
 ): MetricPoint[] {
   const map = new Map<string, BucketState>();
 
@@ -62,12 +63,18 @@ export function aggregateSeries(
     map.set(label, state);
   }
 
-  return [...map.entries()]
+  const series = [...map.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([label, state]) => ({
       label,
       value: mode === "total" ? Math.round(state.sum * 10) / 10 : Math.round((state.sum / state.count) * 10) / 10,
     }));
+
+  if (!options?.trimPartialEdges || granularity === "day" || mode !== "total" || series.length <= 2) {
+    return series;
+  }
+
+  return series.slice(1, -1);
 }
 
 export type { Granularity, AggregationMode };
