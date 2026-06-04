@@ -22,8 +22,8 @@ describe("Landing page", () => {
     expect(link).toHaveTextContent(/import health data/i);
   });
 
-  it("does not render the UploadForm on the landing page", () => {
+  it("renders the UploadForm on the landing page", () => {
     render(<Home />);
-    expect(screen.queryByTestId("file-input")).not.toBeInTheDocument();
+    expect(screen.getByTestId("file-input")).toBeInTheDocument();
   });
 });

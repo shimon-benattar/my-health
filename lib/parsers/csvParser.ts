@@ -70,6 +70,33 @@ function parseSleep(raw: string): number | null {
   return total > 0 ? total : null;
 }
 
+function parseDurationMinutes(raw: string): number | null {
+  if (isEmpty(raw)) return null;
+
+  const hoursMatch = raw.match(/(\d+)h/);
+  const minutesMatch = raw.match(/(\d+)m/);
+
+  if (!hoursMatch && !minutesMatch && /^\d+$/.test(raw.trim())) {
+    const val = parseInt(raw.trim(), 10);
+    return Number.isNaN(val) ? null : val;
+  }
+
+  const hours = hoursMatch ? parseInt(hoursMatch[1], 10) : 0;
+  const minutes = minutesMatch ? parseInt(minutesMatch[1], 10) : 0;
+  const total = hours * 60 + minutes;
+
+  return total > 0 ? total : null;
+}
+
+function normalizeSportType(rawWorkoutType: string): string | null {
+  const val = rawWorkoutType.trim().toLowerCase();
+  if (!val) return null;
+
+  if (val.includes("running")) return "running";
+  if (val.includes("racquetball") || val.includes("racketball") || val.includes("padel")) return "racketball";
+  return val;
+}
+
 // ---------------------------------------------------------------------------
 // Row transformer
 // ---------------------------------------------------------------------------
@@ -77,8 +104,13 @@ function parseSleep(raw: string): number | null {
 type RawRow = Record<string, string>;
 
 function parseRow(row: RawRow): HealthEntryInput {
+  const workoutTypeRaw = (row["Workout Type"] ?? "").trim();
+
   return {
     date: parseDate(row["Date"]),
+    workoutType: workoutTypeRaw || null,
+    workoutDurationMinutes: parseDurationMinutes(row["DURATION"] ?? ""),
+    sportType: workoutTypeRaw ? normalizeSportType(workoutTypeRaw) : null,
     activeCalories: parseNumber(row["Active Calories (kcal)"] ?? ""),
     cardioFitness: parseNumber(row["Cardio Fitness (mL/min·kg)"] ?? ""),
     heartRate: parseRange(row["Heart Rate (bpm)"] ?? ""),

@@ -11,6 +11,18 @@ vi.mock("@/lib/models/HealthEntry", () => ({
   default: { find: mockFind },
 }));
 
+const mockFindOneAndUpdateProfile = vi.fn().mockResolvedValue({
+  key: "primary",
+  name: "Shimon",
+  birthdate: "21/04/1979",
+  weightKg: 85,
+  heightCm: 177,
+});
+
+vi.mock("@/lib/models/UserProfile", () => ({
+  default: { findOneAndUpdate: mockFindOneAndUpdateProfile },
+}));
+
 const { GET } = await import("@/app/api/dashboard/metrics/route");
 
 beforeEach(() => {

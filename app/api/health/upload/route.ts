@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import HealthEntry from "@/lib/models/HealthEntry";
+import UserProfile from "@/lib/models/UserProfile";
 import { parseCSV } from "@/lib/parsers/csvParser";
 import type { IngestionResult } from "@/types/health";
 
@@ -8,6 +9,7 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("file");
+    const weightKgRaw = formData.get("weightKg");
 
     if (!file || !(file instanceof File)) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -25,6 +27,25 @@ export async function POST(request: NextRequest) {
     }
 
     await connectDB();
+
+    if (typeof weightKgRaw === "string" && weightKgRaw.trim() !== "") {
+      const weightKg = Number(weightKgRaw);
+      if (Number.isFinite(weightKg) && weightKg > 0 && weightKg < 400) {
+        await UserProfile.findOneAndUpdate(
+          { key: "primary" },
+          {
+            $set: { weightKg },
+            $setOnInsert: {
+              key: "primary",
+              name: "Shimon",
+              birthdate: "21/04/1979",
+              heightCm: 177,
+            },
+          },
+          { upsert: true, returnDocument: "after", lean: true }
+        );
+      }
+    }
 
     let inserted = 0;
     let updated = 0;

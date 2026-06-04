@@ -6,6 +6,8 @@ export interface RangeValue {
 export interface HealthEntryInput {
   date: Date;
   sportType?: string | null;
+  workoutType?: string | null;
+  workoutDurationMinutes?: number | null;
   activeCalories: number | null;
   cardioFitness: number | null;
   heartRate: RangeValue | null;
@@ -27,6 +29,8 @@ export interface HealthEntryDoc {
   _id: string;
   date: Date;
   sportType?: string | null;
+  workoutType?: string | null;
+  workoutDurationMinutes?: number | null;
   activeCalories: number | null;
   cardioFitness: number | null;
   heartRate: RangeValue | null;
@@ -36,9 +40,19 @@ export interface HealthEntryDoc {
   steps: number | null;
 }
 
+export interface UserProfile {
+  name: string;
+  birthdate: string; // DD/MM/YYYY
+  weightKg: number;
+  heightCm: number;
+  updatedAt?: string;
+}
+
 export interface DashboardMetricsResponse {
   entries: HealthEntryDoc[];
   readiness: number;
+  readinessTrend: number[];
+  profile?: UserProfile | null;
   sportSummary?: Record<
     string,
     {

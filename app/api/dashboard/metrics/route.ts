@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import HealthEntry from "@/lib/models/HealthEntry";
+import UserProfile from "@/lib/models/UserProfile";
 import { calcReadinessFromInput } from "@/lib/readiness";
 import type { HealthEntryDoc } from "@/types/health";
 
@@ -38,6 +39,18 @@ function parseRange(raw: string | null): RangeParam {
 
 function toDateSafe(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
+}
+
+function buildReadinessTrend(entries: HealthEntryDoc[]): number[] {
+  const sortedAsc = [...entries].sort((a, b) => toDateSafe(a.date).getTime() - toDateSafe(b.date).getTime());
+
+  return sortedAsc.map((entry, idx) => {
+    const previous = idx > 0 ? sortedAsc[idx - 1] : null;
+    return calcReadinessFromInput({
+      currentHrvMax: entry.hrv?.max ?? null,
+      yesterdaySleepMinutes: previous?.sleep ?? null,
+    });
+  });
 }
 
 export async function GET(request: NextRequest) {
@@ -102,7 +115,22 @@ export async function GET(request: NextRequest) {
       yesterdaySleepMinutes: previous?.sleep ?? null,
     });
 
-    return NextResponse.json({ entries, readiness, sportSummary }, { status: 200 });
+    const readinessTrend = buildReadinessTrend(entries);
+    const profile = await UserProfile.findOneAndUpdate(
+      { key: "primary" },
+      {
+        $setOnInsert: {
+          key: "primary",
+          name: "Shimon",
+          birthdate: "21/04/1979",
+          weightKg: 85,
+          heightCm: 177,
+        },
+      },
+      { upsert: true, returnDocument: "after", lean: true }
+    );
+
+    return NextResponse.json({ entries, readiness, readinessTrend, profile, sportSummary }, { status: 200 });
   } catch (err) {
     console.error("[dashboard/metrics] error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

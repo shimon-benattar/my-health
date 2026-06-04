@@ -1,4 +1,5 @@
 import Link from "next/link";
+import UploadForm from "@/components/UploadForm";
 
 const STAT_CARDS = [
   { label: "Steps", value: "9,243", icon: "🚶", color: "blue", pos: "top-24 left-8", anim: "animate-float" },
@@ -71,6 +72,10 @@ export default function Home() {
           >
             Import Health Data
           </Link>
+        </div>
+
+        <div className="mt-10 w-full max-w-2xl animate-fade-in-up-delay-2 text-left">
+          <UploadForm compact />
         </div>
       </div>
     </div>

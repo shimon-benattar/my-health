@@ -4,12 +4,17 @@ import { useState, useRef } from "react";
 import IngestionSummary from "@/components/IngestionSummary";
 import type { IngestionResult } from "@/types/health";
 
-export default function UploadForm() {
+interface Props {
+  compact?: boolean;
+}
+
+export default function UploadForm({ compact = false }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [status, setStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
   const [result, setResult] = useState<IngestionResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [weightKg, setWeightKg] = useState<string>("85");
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
@@ -29,6 +34,9 @@ export default function UploadForm() {
 
     const formData = new FormData();
     formData.append("file", selectedFile);
+    if (weightKg.trim() !== "") {
+      formData.append("weightKg", weightKg.trim());
+    }
 
     try {
       const res = await fetch("/api/health/upload", {
@@ -53,7 +61,7 @@ export default function UploadForm() {
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+    <div className={`rounded-lg border border-gray-200 bg-white shadow-sm ${compact ? "p-4" : "p-6"}`}>
       <h2 className="mb-4 text-lg font-semibold text-gray-900">Upload Health Export</h2>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -79,6 +87,23 @@ export default function UploadForm() {
           <span className="truncate text-sm text-gray-500" data-testid="file-name">
             {selectedFile ? selectedFile.name : "No file chosen"}
           </span>
+        </div>
+
+        <div className="grid gap-2">
+          <label htmlFor="weight-kg" className="text-sm font-medium text-gray-700">
+            Current weight (kg)
+          </label>
+          <input
+            id="weight-kg"
+            data-testid="weight-input"
+            type="number"
+            min="1"
+            max="400"
+            step="0.1"
+            value={weightKg}
+            onChange={(e) => setWeightKg(e.target.value)}
+            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+          />
         </div>
 
         <button

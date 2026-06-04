@@ -25,6 +25,11 @@ export const TOOLTIP_CONTENT: Record<string, TooltipContent> = {
     trendMeaning: "Consistent 7-9 hour patterns generally improve readiness; irregular or short sleep reduces resilience.",
     actionableRecommendations: "Set a fixed sleep schedule, reduce late-night stimulants, and protect pre-sleep wind-down time.",
   },
+  steps: {
+    why: "Steps reflect daily movement load and general activity volume.",
+    trendMeaning: "Rising trends indicate higher daily movement; drops may indicate lower baseline activity.",
+    actionableRecommendations: "Treat steps as a standalone health metric and aim for stable weekly totals.",
+  },
   runningPeak: {
     why: "Running peak heart rate indicates upper aerobic and threshold stress.",
     trendMeaning: "Rising peaks with stable recovery can reflect fitness gains; frequent very high peaks may indicate overreaching.",

@@ -27,6 +27,7 @@ describe("UploadForm rendering", () => {
     expect(screen.getByRole("button", { name: /upload csv/i })).toBeInTheDocument();
     expect(screen.getByText(/no file chosen/i)).toBeInTheDocument();
     expect(screen.getByText(/browse/i)).toBeInTheDocument();
+    expect(screen.getByTestId("weight-input")).toBeInTheDocument();
   });
 
   it("Upload CSV button is disabled when no file is selected", () => {
