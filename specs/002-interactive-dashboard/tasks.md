@@ -55,5 +55,5 @@
 ## Phase 6: Deployment
 
 - [x] T018 Run full test suite; confirm all pass
-- [ ] T019 Push branch, open PR → merge to `main`
-- [ ] T020 Confirm Vercel production deploy is ● Ready and routes `/dashboard` render new tabs
+- [x] T019 Push branch, open PR → merge to `main`
+- [x] T020 Confirm Vercel production deploy is ● Ready and routes `/dashboard` render new tabs
