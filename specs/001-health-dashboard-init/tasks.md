@@ -1,4 +1,4 @@
-# Tasks: Health Dashboard Initialization
+# Tasks: Health Dashboard Initialization — CLOSED ✅ 2026-06-04
 
 **Input**: `specs/001-health-dashboard-init/spec.md` + `specs/001-health-dashboard-init/plan.md`  
 **Branch**: `001-health-dashboard-init`

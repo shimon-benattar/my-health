@@ -3,6 +3,7 @@ import type { RangeValue } from "@/types/health";
 
 export interface IHealthEntry extends Document {
   date: Date;
+  sportType?: string | null;
   activeCalories: number | null;
   cardioFitness: number | null;
   heartRate: RangeValue | null;
@@ -20,6 +21,7 @@ const RangeValueSchema = new Schema<RangeValue>(
 const HealthEntrySchema = new Schema<IHealthEntry>(
   {
     date: { type: Date, required: true, unique: true, index: true },
+    sportType: { type: String, default: null, index: true },
     activeCalories: { type: Number, default: null },
     cardioFitness: { type: Number, default: null },
     heartRate: { type: RangeValueSchema, default: null },
