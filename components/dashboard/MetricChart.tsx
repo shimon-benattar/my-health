@@ -27,6 +27,20 @@ interface Props {
   variant?: "line" | "bar";
 }
 
+type TooltipValue = number | string | Array<number | string> | undefined;
+
+function formatTooltipValue(value: TooltipValue, unit: string): string {
+  if (Array.isArray(value)) {
+    return `${value.join(" - ")}${unit ? ` ${unit}` : ""}`;
+  }
+
+  if (value === undefined) {
+    return unit ? `0 ${unit}` : "0";
+  }
+
+  return `${value}${unit ? ` ${unit}` : ""}`;
+}
+
 export default function MetricChart({ title, tooltipKey, data, unit = "", variant = "line" }: Props) {
   const cleaned = data.filter((d) => d.value !== null) as Array<{ label: string; value: number }>;
 
@@ -49,7 +63,7 @@ export default function MetricChart({ title, tooltipKey, data, unit = "", varian
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(val: number) => `${val}${unit ? ` ${unit}` : ""}`} />
+                <Tooltip formatter={(value) => formatTooltipValue(value as TooltipValue, unit)} />
                 <Bar dataKey="value" fill="#2563eb" radius={[6, 6, 0, 0]} />
               </BarChart>
             ) : (
@@ -57,7 +71,7 @@ export default function MetricChart({ title, tooltipKey, data, unit = "", varian
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(val: number) => `${val}${unit ? ` ${unit}` : ""}`} />
+                <Tooltip formatter={(value) => formatTooltipValue(value as TooltipValue, unit)} />
                 <Line type="monotone" dataKey="value" stroke="#1d4ed8" strokeWidth={2} dot={false} />
               </LineChart>
             )}
