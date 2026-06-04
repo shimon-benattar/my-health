@@ -5,6 +5,7 @@ export interface RangeValue {
 
 export interface HealthEntryInput {
   date: Date;
+  sportType?: string | null;
   activeCalories: number | null;
   cardioFitness: number | null;
   heartRate: RangeValue | null;
@@ -25,6 +26,7 @@ export interface IngestionResult {
 export interface HealthEntryDoc {
   _id: string;
   date: Date;
+  sportType?: string | null;
   activeCalories: number | null;
   cardioFitness: number | null;
   heartRate: RangeValue | null;
@@ -32,4 +34,18 @@ export interface HealthEntryDoc {
   restingHeartRate: number | null;
   sleep: number | null;
   steps: number | null;
+}
+
+export interface DashboardMetricsResponse {
+  entries: HealthEntryDoc[];
+  readiness: number;
+  sportSummary?: Record<
+    string,
+    {
+      sessions: number;
+      totalCalories: number;
+      totalSteps: number;
+      peakHeartRateMax: number | null;
+    }
+  >;
 }
