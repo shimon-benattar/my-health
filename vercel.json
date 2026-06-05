@@ -1,3 +1,8 @@
 {
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "functions": {
+    "app/api/health/import/apple-health/route.ts": {
+      "maxDuration": 300
+    }
+  }
 }
