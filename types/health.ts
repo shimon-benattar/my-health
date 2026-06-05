@@ -8,6 +8,8 @@ export interface HealthEntryInput {
   sportType?: string | null;
   workoutType?: string | null;
   workoutDurationMinutes?: number | null;
+  sourceType?: "csv" | "apple-health";
+  sourceFile?: string | null;
   activeCalories: number | null;
   cardioFitness: number | null;
   heartRate: RangeValue | null;
@@ -17,11 +19,22 @@ export interface HealthEntryInput {
   steps: number | null;
 }
 
+export interface ImportedDataPoint {
+  date: string;
+  action: "inserted" | "updated";
+  pulledAt: string;
+  sourceType: "csv" | "apple-health";
+  sourceFile: string | null;
+}
+
 export interface IngestionResult {
+  requestId?: string;
   inserted: number;
   updated: number;
   skipped: number;
+  unchanged: number;
   dateRange: { from: string; to: string } | null;
+  pulled: ImportedDataPoint[];
 }
 
 /** Shape of a MongoDB HealthEntry document after `.lean()` */
@@ -31,6 +44,9 @@ export interface HealthEntryDoc {
   sportType?: string | null;
   workoutType?: string | null;
   workoutDurationMinutes?: number | null;
+  sourceType?: "csv" | "apple-health";
+  sourceFile?: string | null;
+  importedAt?: Date | string | null;
   activeCalories: number | null;
   cardioFitness: number | null;
   heartRate: RangeValue | null;
@@ -62,4 +78,30 @@ export interface DashboardMetricsResponse {
       peakHeartRateMax: number | null;
     }
   >;
+}
+
+export interface AppleHealthImportCounts {
+  recordsProcessed: number;
+  workoutsProcessed: number;
+  routesFound: number;
+  routesMatched: number;
+  unmatchedWorkouts: number;
+  skipped: number;
+  inserted: number;
+  updated: number;
+}
+
+export interface AppleHealthUnmatchedWorkout {
+  workoutType: string;
+  startDate: string;
+  endDate: string;
+  reason: string;
+}
+
+export interface AppleHealthImportResult {
+  requestId: string;
+  status: "ok";
+  counts: AppleHealthImportCounts;
+  warnings: string[];
+  sampleUnmatchedWorkouts: AppleHealthUnmatchedWorkout[];
 }

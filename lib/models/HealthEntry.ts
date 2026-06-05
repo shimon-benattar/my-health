@@ -6,6 +6,9 @@ export interface IHealthEntry extends Document {
   sportType?: string | null;
   workoutType?: string | null;
   workoutDurationMinutes?: number | null;
+  sourceType?: "csv" | "apple-health";
+  sourceFile?: string | null;
+  importedAt?: Date | null;
   activeCalories: number | null;
   cardioFitness: number | null;
   heartRate: RangeValue | null;
@@ -26,6 +29,9 @@ const HealthEntrySchema = new Schema<IHealthEntry>(
     sportType: { type: String, default: null, index: true },
     workoutType: { type: String, default: null },
     workoutDurationMinutes: { type: Number, default: null },
+    sourceType: { type: String, enum: ["csv", "apple-health"], default: "csv", index: true },
+    sourceFile: { type: String, default: null },
+    importedAt: { type: Date, default: null, index: true },
     activeCalories: { type: Number, default: null },
     cardioFitness: { type: Number, default: null },
     heartRate: { type: RangeValueSchema, default: null },

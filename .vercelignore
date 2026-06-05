@@ -1,0 +1,6 @@
+data/**
+coverage/**
+.specs/**
+specs/**
+.vscode/**
+*.log

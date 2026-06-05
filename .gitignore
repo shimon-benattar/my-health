@@ -37,3 +37,6 @@ next-env.d.ts
 .env.local
 .env*
 data/*.csv
+data/HealthExport0406.zip
+data/apple_health_export0406/export.xml
+data/apple_health_export0406/export_cda.xml

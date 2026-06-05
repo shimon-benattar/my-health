@@ -8,6 +8,8 @@ const ENTRIES: HealthEntryDoc[] = [
   {
     _id: "1",
     date: new Date("2026-06-03"),
+    sourceType: "csv",
+    importedAt: new Date("2026-06-04T10:00:00Z"),
     sportType: null,
     workoutType: null,
     workoutDurationMinutes: null,
@@ -22,6 +24,8 @@ const ENTRIES: HealthEntryDoc[] = [
   {
     _id: "2",
     date: new Date("2026-06-02"),
+    sourceType: "apple-health",
+    importedAt: new Date("2026-06-04T10:05:00Z"),
     sportType: null,
     workoutType: null,
     workoutDurationMinutes: null,
@@ -46,5 +50,14 @@ describe("SourceDataTable", () => {
     await userEvent.click(screen.getByRole("button", { name: /apply filter/i }));
 
     expect(screen.getAllByRole("row")).toHaveLength(2);
+  });
+
+  it("supports filtering by source type", async () => {
+    render(<SourceDataTable entries={ENTRIES} />);
+
+    await userEvent.selectOptions(screen.getByLabelText("source type"), "apple-health");
+
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+    expect(screen.getByText("apple-health")).toBeInTheDocument();
   });
 });

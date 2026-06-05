@@ -19,6 +19,8 @@ const config: Config = {
         "fade-in-up": "fadeInUp 0.7s ease-out both",
         "fade-in-up-delay": "fadeInUp 0.7s ease-out 0.2s both",
         "fade-in-up-delay-2": "fadeInUp 0.7s ease-out 0.4s both",
+        shimmer: "shimmer 1.6s linear infinite",
+        orbit: "orbit 1.4s linear infinite",
       },
       keyframes: {
         float: {
@@ -28,6 +30,14 @@ const config: Config = {
         fadeInUp: {
           "0%": { opacity: "0", transform: "translateY(24px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        shimmer: {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(200%)" },
+        },
+        orbit: {
+          "0%": { transform: "rotate(0deg) translateX(20px) rotate(0deg)" },
+          "100%": { transform: "rotate(360deg) translateX(20px) rotate(-360deg)" },
         },
       },
     },

@@ -12,12 +12,15 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@types/sax": "^1.2.7",
+    "jszip": "^3.10.1",
     "mongoose": "^9.6.3",
     "next": "14.2.35",
     "papaparse": "^5.5.3",
     "react": "^18",
     "react-dom": "^18",
-    "recharts": "^3.8.1"
+    "recharts": "^3.8.1",
+    "sax": "^1.6.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

@@ -7,6 +7,7 @@ type SortKey = "date" | "steps" | "activeCalories" | "sleep" | "restingHeartRate
 type SortDir = "asc" | "desc";
 type NumericFilterOperator = "gt" | "lt" | "eq";
 type NumericFilterColumn = Exclude<SortKey, "date">;
+type SourceTypeFilter = "all" | "csv" | "apple-health";
 
 interface Props {
   entries: HealthEntryDoc[];
@@ -54,6 +55,7 @@ export default function SourceDataTable({ entries }: Props) {
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [sourceType, setSourceType] = useState<SourceTypeFilter>("all");
   const [activeFilter, setActiveFilter] = useState<ColumnFilter | null>(null);
   const [draftFilter, setDraftFilter] = useState<ColumnFilter>({ column: "steps", operator: "gt", value: "" });
 
@@ -64,6 +66,8 @@ export default function SourceDataTable({ entries }: Props) {
       if (q) {
         const haystack = [
           fmtDate(entry.date),
+          String(entry.sourceType ?? ""),
+          entry.importedAt ? new Date(entry.importedAt).toISOString() : "",
           String(entry.steps ?? ""),
           String(entry.activeCalories ?? ""),
           String(entry.restingHeartRate ?? ""),
@@ -75,6 +79,10 @@ export default function SourceDataTable({ entries }: Props) {
         if (!haystack.includes(q)) {
           return false;
         }
+      }
+
+      if (sourceType !== "all" && entry.sourceType !== sourceType) {
+        return false;
       }
 
       if (activeFilter && activeFilter.value.trim() !== "") {
@@ -100,7 +108,7 @@ export default function SourceDataTable({ entries }: Props) {
       }
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [entries, query, sortKey, sortDir, activeFilter]);
+  }, [entries, query, sortKey, sortDir, activeFilter, sourceType]);
 
   function toggleSort(nextKey: SortKey) {
     if (sortKey === nextKey) {
@@ -130,6 +138,16 @@ export default function SourceDataTable({ entries }: Props) {
             placeholder="Smart search: date, workout, steps..."
             className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400"
           />
+          <select
+            aria-label="source type"
+            value={sourceType}
+            onChange={(e) => setSourceType(e.target.value as SourceTypeFilter)}
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm"
+          >
+            <option value="all">All sources</option>
+            <option value="csv">CSV</option>
+            <option value="apple-health">Apple Health XML</option>
+          </select>
           <select
             aria-label="filter column"
             value={draftFilter.column}
@@ -173,6 +191,7 @@ export default function SourceDataTable({ entries }: Props) {
               setActiveFilter(null);
               setDraftFilter({ column: "steps", operator: "gt", value: "" });
               setQuery("");
+              setSourceType("all");
             }}
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm"
           >
@@ -197,6 +216,8 @@ export default function SourceDataTable({ entries }: Props) {
                   Date
                 </button>
               </th>
+              <th className="px-3 py-2 text-left font-semibold">Source</th>
+              <th className="px-3 py-2 text-left font-semibold">Imported At</th>
               <th className="px-3 py-2 text-left">
                 <button type="button" className="font-semibold" onClick={() => { toggleSort("steps"); activateColumn("steps"); }}>Steps</button>
               </th>
@@ -220,6 +241,8 @@ export default function SourceDataTable({ entries }: Props) {
             {rows.map((entry) => (
               <tr key={String(entry._id)} className="hover:bg-slate-50">
                 <td className="px-3 py-2 whitespace-nowrap">{fmtDate(entry.date)}</td>
+                <td className="px-3 py-2">{entry.sourceType ?? "csv"}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{entry.importedAt ? new Date(entry.importedAt).toISOString().replace("T", " ").slice(0, 19) : "-"}</td>
                 <td className="px-3 py-2">{cellText(entry.steps)}</td>
                 <td className="px-3 py-2">{cellText(entry.activeCalories)}</td>
                 <td className="px-3 py-2">{fmtSleep(entry.sleep)}</td>
