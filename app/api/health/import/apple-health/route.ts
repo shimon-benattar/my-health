@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
+import { del } from "@vercel/blob";
 import JSZip from "jszip";
 import { connectDB } from "@/lib/db";
 import HealthEntry from "@/lib/models/HealthEntry";
@@ -95,23 +96,67 @@ export async function POST(request: NextRequest) {
   }
 
   let filename = "unknown";
+  let blobUrlToDelete: string | null = null;
   const warnings: string[] = [];
 
   try {
     await connectDB();
-    const formData = await request.formData();
-    const file = formData.get("file");
 
-    if (!file || !(file instanceof File)) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    // Accept either multipart/form-data (small files / tests) or JSON with blobUrl (large file
+    // uploads that went directly to Vercel Blob to bypass the 4.5 MB function body limit).
+    let zipBuffer: ArrayBuffer;
+    const contentType = request.headers.get("content-type") ?? "";
+
+    if (contentType.startsWith("application/json")) {
+      const body = (await request.json()) as { blobUrl?: string; weightKg?: string };
+      if (!body.blobUrl || typeof body.blobUrl !== "string") {
+        return NextResponse.json({ error: "blobUrl is required when using JSON body" }, { status: 400 });
+      }
+      blobUrlToDelete = body.blobUrl;
+      filename = body.blobUrl.split("/").pop() ?? "upload.zip";
+
+      addLog("info", "Import request received via blob URL", { blobUrl: body.blobUrl, filename });
+
+      const blobRes = await fetch(body.blobUrl);
+      if (!blobRes.ok) {
+        return NextResponse.json(
+          { error: `Failed to fetch blob: HTTP ${blobRes.status}` },
+          { status: 502 }
+        );
+      }
+      zipBuffer = await blobRes.arrayBuffer();
+    } else {
+      const formData = await request.formData();
+      const file = formData.get("file");
+
+      if (!file || !(file instanceof File)) {
+        return NextResponse.json({ error: "No file provided" }, { status: 400 });
+      }
+      filename = file.name;
+      addLog("info", "Import request received via form upload", {
+        filename: file.name,
+        fileSizeBytes: file.size,
+        fileSizeHuman: bytesToHuman(file.size),
+        fileType: file.type || "unknown",
+      });
+
+      if (!file.name.toLowerCase().endsWith(".zip")) {
+        addLog("warn", "Rejected non-zip upload", { filename: file.name });
+        await ImportLog.create({
+          requestId,
+          filename,
+          sourceType: "apple-health",
+          status: "error",
+          startedAt: new Date(),
+          finishedAt: new Date(),
+          error: "Only ZIP files are accepted",
+          steps: logSteps,
+        });
+        return NextResponse.json({ error: "Only ZIP files are accepted" }, { status: 400 });
+      }
+
+      zipBuffer = await file.arrayBuffer();
     }
-    filename = file.name;
-    addLog("info", "Import request received", {
-      filename: file.name,
-      fileSizeBytes: file.size,
-      fileSizeHuman: bytesToHuman(file.size),
-      fileType: file.type || "unknown",
-    });
 
     await ImportLog.create({
       requestId,
@@ -122,19 +167,7 @@ export async function POST(request: NextRequest) {
       steps: [],
     });
 
-    if (!file.name.toLowerCase().endsWith(".zip")) {
-      addLog("warn", "Rejected non-zip upload", { filename: file.name });
-      await ImportLog.updateOne(
-        { requestId },
-        {
-          $set: { status: "error", finishedAt: new Date(), error: "Only ZIP files are accepted" },
-          $push: { steps: { $each: logSteps } },
-        }
-      );
-      return NextResponse.json({ error: "Only ZIP files are accepted" }, { status: 400 });
-    }
-
-    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const zip = await JSZip.loadAsync(zipBuffer);
     const files = Object.values(zip.files).filter((item) => !item.dir);
     addLog("info", "ZIP loaded", {
       totalEntries: Object.keys(zip.files).length,
@@ -269,7 +302,7 @@ export async function POST(request: NextRequest) {
           $set: {
             ...entry,
             sourceType: "apple-health" as const,
-            sourceFile: file.name,
+            sourceFile: filename,
             importedAt,
           },
         },
@@ -411,5 +444,12 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } finally {
+    // Clean up the blob after processing (success or failure) to avoid storage waste.
+    if (blobUrlToDelete) {
+      await del(blobUrlToDelete).catch((e) =>
+        console.warn("[apple-health] Failed to delete blob:", blobUrlToDelete, e)
+      );
+    }
   }
 }

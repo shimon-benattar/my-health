@@ -1,8 +1,13 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { upload } from "@vercel/blob/client";
 import IngestionSummary from "@/components/IngestionSummary";
 import type { AppleHealthImportResult, IngestionResult } from "@/types/health";
+
+/** Files larger than this threshold are uploaded directly to Vercel Blob to bypass
+ *  the 4.5 MB serverless function body limit. */
+const BLOB_THRESHOLD_BYTES = 4 * 1024 * 1024; // 4 MB
 
 interface Props {
   compact?: boolean;
@@ -128,6 +133,44 @@ export default function UploadForm({ compact = false }: Props) {
         setUploadSpeedMbps((bytesPerSecond * 8) / (1024 * 1024));
       };
 
+      // Large files (> 4 MB) bypass the serverless function body limit by uploading
+      // directly to Vercel Blob storage, then instructing the import API to fetch from there.
+      if (selectedFile.size > BLOB_THRESHOLD_BYTES) {
+        const startedAt = Date.now();
+        const blob = await upload(selectedFile.name, selectedFile, {
+          access: "public",
+          handleUploadUrl: "/api/health/import/upload-url",
+          onUploadProgress: ({ loaded, total }) => {
+            const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
+            updateProgress(loaded, total, elapsedSeconds);
+          },
+        });
+
+        setUploadPhase("processing");
+        setUploadProgress(100);
+        setEtaSeconds(null);
+
+        const importRes = await fetch("/api/health/import/apple-health", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ blobUrl: blob.url, weightKg: weightKg.trim() || undefined }),
+        });
+        const importBody = await importRes.json().catch(() => ({ error: "Invalid JSON response" })) as IngestionResult | AppleHealthImportResult | { error: string };
+
+        if (!importRes.ok) {
+          throw new Error(
+            (importBody as { error?: string }).error ?? `Import failed: HTTP ${importRes.status}`
+          );
+        }
+
+        setResult(importBody as IngestionResult | AppleHealthImportResult);
+        setStatus("success");
+        setSelectedFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+
+      // Small files: use the existing direct-upload path.
       const firstResponse = await postFormWithProgress("/api/health/upload", selectedFile, weightKg, updateProgress);
       let finalResponse = firstResponse;
 
