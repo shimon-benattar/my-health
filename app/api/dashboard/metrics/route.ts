@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import HealthEntry from "@/lib/models/HealthEntry";
 import UserProfile from "@/lib/models/UserProfile";
+import AppleHealthWorkout from "@/lib/models/AppleHealthWorkout";
 import { calcReadinessFromInput } from "@/lib/readiness";
 import type { HealthEntryDoc } from "@/types/health";
 
@@ -14,6 +15,18 @@ interface SportAggregate {
   totalCalories: number;
   totalSteps: number;
   peakHeartRateMax: number | null;
+}
+
+function normalizeWorkoutType(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const value = raw.trim().toLowerCase();
+  if (!value) return null;
+  if (value.includes("running")) return "running";
+  if (value.includes("padel")) return "padel";
+  if (value.includes("racketball")) return "racketball";
+  if (value.includes("walk")) return "walking";
+  if (value.includes("cycle") || value.includes("bike")) return "cycling";
+  return value;
 }
 
 function getStartDate(range: RangeParam): Date | null {
@@ -72,8 +85,42 @@ export async function GET(request: NextRequest) {
 
     const entries = (await HealthEntry.find(filter).sort({ date: -1 }).lean()) as unknown as HealthEntryDoc[];
 
-    const sportSummary = entries.reduce<Record<string, SportAggregate>>((acc, entry) => {
-      const sport = entry.sportType?.trim().toLowerCase();
+    const workoutFilter: Record<string, unknown> = {};
+    if (startDate) {
+      workoutFilter.startDate = { $gte: startDate };
+    }
+    if (sportType) {
+      workoutFilter.workoutType = { $regex: sportType, $options: "i" };
+    }
+
+    const rawWorkouts = (await AppleHealthWorkout.find(workoutFilter)
+      .sort({ startDate: -1 })
+      .lean()) as unknown as Array<{
+      _id: unknown;
+      externalId: string;
+      workoutType: string;
+      startDate: Date | string;
+      endDate: Date | string;
+      durationMinutes: number | null;
+      totalEnergyBurned: number | null;
+      totalDistance: number | null;
+      routeCorrelation?: { matched: boolean; confidence: number; matchReason: string };
+    }>;
+
+    const workouts = rawWorkouts.map((workout) => ({
+      _id: String(workout._id),
+      externalId: workout.externalId,
+      workoutType: workout.workoutType,
+      startDate: workout.startDate,
+      endDate: workout.endDate,
+      durationMinutes: workout.durationMinutes,
+      totalEnergyBurned: workout.totalEnergyBurned,
+      totalDistance: workout.totalDistance,
+      routeCorrelation: workout.routeCorrelation,
+    }));
+
+    const sportSummary = workouts.reduce<Record<string, SportAggregate>>((acc, workout) => {
+      const sport = normalizeWorkoutType(workout.workoutType);
       if (!sport) {
         return acc;
       }
@@ -85,19 +132,11 @@ export async function GET(request: NextRequest) {
         peakHeartRateMax: null,
       };
 
-      const peak = entry.heartRate?.max ?? null;
-      const nextPeak =
-        peak === null
-          ? existing.peakHeartRateMax
-          : existing.peakHeartRateMax === null
-            ? peak
-            : Math.max(existing.peakHeartRateMax, peak);
-
       acc[sport] = {
         sessions: existing.sessions + 1,
-        totalCalories: existing.totalCalories + (entry.activeCalories ?? 0),
-        totalSteps: existing.totalSteps + (entry.steps ?? 0),
-        peakHeartRateMax: nextPeak,
+        totalCalories: existing.totalCalories + (workout.totalEnergyBurned ?? 0),
+        totalSteps: existing.totalSteps,
+        peakHeartRateMax: existing.peakHeartRateMax,
       };
 
       return acc;
@@ -130,7 +169,7 @@ export async function GET(request: NextRequest) {
       { upsert: true, returnDocument: "after", lean: true }
     );
 
-    return NextResponse.json({ entries, readiness, readinessTrend, profile, sportSummary }, { status: 200 });
+    return NextResponse.json({ entries, workouts, readiness, readinessTrend, profile, sportSummary }, { status: 200 });
   } catch (err) {
     console.error("[dashboard/metrics] error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

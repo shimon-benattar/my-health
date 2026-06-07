@@ -7,8 +7,16 @@ const mockLean = vi.fn();
 const mockSort = vi.fn(() => ({ lean: mockLean }));
 const mockFind = vi.fn(() => ({ sort: mockSort }));
 
+const mockWorkoutLean = vi.fn();
+const mockWorkoutSort = vi.fn(() => ({ lean: mockWorkoutLean }));
+const mockWorkoutFind = vi.fn(() => ({ sort: mockWorkoutSort }));
+
 vi.mock("@/lib/models/HealthEntry", () => ({
   default: { find: mockFind },
+}));
+
+vi.mock("@/lib/models/AppleHealthWorkout", () => ({
+  default: { find: mockWorkoutFind },
 }));
 
 const mockFindOneAndUpdateProfile = vi.fn().mockResolvedValue({
@@ -39,6 +47,7 @@ describe("GET /api/dashboard/metrics", () => {
       { date: new Date("2026-06-03"), hrv: { min: 30, max: 50 }, sleep: 420 },
       { date: new Date("2026-06-02"), hrv: { min: 28, max: 45 }, sleep: 390 },
     ]);
+    mockWorkoutLean.mockResolvedValue([]);
 
     const res = await GET(makeRequest("http://localhost:3000/api/dashboard/metrics"));
     expect(res.status).toBe(200);
@@ -52,14 +61,17 @@ describe("GET /api/dashboard/metrics", () => {
 
   it("applies sportType filter when provided", async () => {
     mockLean.mockResolvedValue([]);
+    mockWorkoutLean.mockResolvedValue([]);
 
     const res = await GET(makeRequest("http://localhost:3000/api/dashboard/metrics?sportType=running&range=7d"));
     expect(res.status).toBe(200);
     expect(mockFind).toHaveBeenCalledWith(expect.objectContaining({ sportType: "running" }));
+    expect(mockWorkoutFind).toHaveBeenCalledWith(expect.objectContaining({ workoutType: expect.any(Object) }));
   });
 
   it("returns 200 with empty entries for unknown sport", async () => {
     mockLean.mockResolvedValue([]);
+    mockWorkoutLean.mockResolvedValue([]);
 
     const res = await GET(makeRequest("http://localhost:3000/api/dashboard/metrics?sportType=padel"));
     expect(res.status).toBe(200);
@@ -70,6 +82,7 @@ describe("GET /api/dashboard/metrics", () => {
 
   it("returns 500 when database query fails", async () => {
     mockLean.mockRejectedValue(new Error("db down"));
+    mockWorkoutLean.mockResolvedValue([]);
     const res = await GET(makeRequest("http://localhost:3000/api/dashboard/metrics"));
     expect(res.status).toBe(500);
   });

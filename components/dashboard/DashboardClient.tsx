@@ -10,7 +10,7 @@ import SourceDataTable from "@/components/dashboard/SourceDataTable";
 import { getMockSportData, type SportSession } from "@/lib/mockData";
 import { aggregateSeries, type AggregationMode, type Granularity } from "@/lib/timeAggregation";
 import { hrvInsight, readinessInsight, rhrInsight, sleepInsight, stepsInsight, vo2Insight } from "@/lib/dashboardInsights";
-import type { DashboardMetricsResponse, HealthEntryDoc } from "@/types/health";
+import type { DashboardMetricsResponse, DashboardWorkoutDoc, HealthEntryDoc } from "@/types/health";
 
 type Tab = "overview" | "sport";
 type RangeParam = "7d" | "30d" | "90d" | "all";
@@ -48,6 +48,17 @@ function sportFromEntry(entry: HealthEntryDoc): string | null {
   return workout;
 }
 
+function sportFromWorkoutType(raw: string): string | null {
+  const value = raw.trim().toLowerCase();
+  if (!value) return null;
+  if (value.includes("running")) return "running";
+  if (value.includes("padel")) return "padel";
+  if (value.includes("racketball")) return "racketball";
+  if (value.includes("walk")) return "walking";
+  if (value.includes("cycle") || value.includes("bike")) return "cycling";
+  return value;
+}
+
 function mapSessions(entries: HealthEntryDoc[], sport: string): SportSession[] {
   const normalized = sport.toLowerCase();
 
@@ -72,6 +83,35 @@ function titleCase(input: string): string {
     .split(/\s+/)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntryDoc[]) {
+  const dailyByDate = new Map<string, HealthEntryDoc>();
+  for (const entry of entries) {
+    dailyByDate.set(toLabel(entry.date), entry);
+  }
+
+  const bySport = new Map<string, SportSession[]>();
+  for (const workout of workouts) {
+    const sport = sportFromWorkoutType(workout.workoutType);
+    if (!sport) continue;
+
+    const dateKey = toLabel(workout.startDate);
+    const daily = dailyByDate.get(dateKey);
+    const session: SportSession = {
+      date: dateKey,
+      peakHeartRate: daily?.heartRate?.max ?? 0,
+      calories: workout.totalEnergyBurned ?? daily?.activeCalories ?? 0,
+      steps: daily?.steps ?? 0,
+      durationMinutes: workout.durationMinutes ?? undefined,
+    };
+
+    const existing = bySport.get(sport) ?? [];
+    existing.push(session);
+    bySport.set(sport, existing);
+  }
+
+  return bySport;
 }
 
 export default function DashboardClient({ initialTab }: Props) {
@@ -137,6 +177,17 @@ export default function DashboardClient({ initialTab }: Props) {
   }), [overview, granularity, mode, metrics.entries, metrics.readinessTrend]);
 
   const sportSections = useMemo(() => {
+    const workoutSessions = mapWorkoutSessions(metrics.workouts ?? [], metrics.entries);
+    if (workoutSessions.size > 0) {
+      return [...workoutSessions.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([sport, sessions]) => ({
+          sport: titleCase(sport),
+          sessions: sessions.sort((a, b) => a.date.localeCompare(b.date)),
+          isMock: false,
+        }));
+    }
+
     const allSports = new Set<string>();
     for (const entry of metrics.entries) {
       const sport = sportFromEntry(entry);
@@ -161,7 +212,7 @@ export default function DashboardClient({ initialTab }: Props) {
       sessions: mapSessions(metrics.entries, sport),
       isMock: false,
     }));
-  }, [metrics.entries]);
+  }, [metrics.entries, metrics.workouts]);
 
   const dataCoverage = useMemo(() => {
     if (metrics.entries.length === 0) {

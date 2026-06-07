@@ -66,6 +66,7 @@ export interface UserProfile {
 
 export interface DashboardMetricsResponse {
   entries: HealthEntryDoc[];
+  workouts?: DashboardWorkoutDoc[];
   readiness: number;
   readinessTrend: number[];
   profile?: UserProfile | null;
@@ -78,6 +79,22 @@ export interface DashboardMetricsResponse {
       peakHeartRateMax: number | null;
     }
   >;
+}
+
+export interface DashboardWorkoutDoc {
+  _id: string;
+  externalId: string;
+  workoutType: string;
+  startDate: Date | string;
+  endDate: Date | string;
+  durationMinutes: number | null;
+  totalEnergyBurned: number | null;
+  totalDistance: number | null;
+  routeCorrelation?: {
+    matched: boolean;
+    confidence: number;
+    matchReason: string;
+  } | null;
 }
 
 export interface AppleHealthImportCounts {
