@@ -10,7 +10,13 @@ function formatBuildDate(input?: string): string {
   if (!input) return "Local development";
   const date = new Date(input);
   if (Number.isNaN(date.getTime())) return input;
-  return date.toUTCString();
+
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Jerusalem",
+    hour12: false,
+  }).format(date);
 }
 
 export default function AboutMenu() {
@@ -40,12 +46,12 @@ export default function AboutMenu() {
 
       {isOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 px-4 py-10 sm:py-16"
           onClick={() => setIsOpen(false)}
           role="presentation"
         >
           <div
-            className="relative max-h-[90vh] w-[90vw] max-w-2xl overflow-auto rounded-lg border border-slate-200 bg-white p-6 text-slate-700 shadow-2xl"
+            className="relative mt-4 max-h-[calc(100vh-5rem)] w-full max-w-2xl overflow-auto rounded-lg border border-slate-200 bg-white p-6 text-slate-700 shadow-2xl sm:mt-0"
             onClick={(event) => event.stopPropagation()}
             role="dialog"
             aria-modal="true"

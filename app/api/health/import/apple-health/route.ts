@@ -6,10 +6,13 @@ import { connectDB } from "@/lib/db";
 import HealthEntry from "@/lib/models/HealthEntry";
 import ImportLog from "@/lib/models/ImportLog";
 import AppleHealthWorkout from "@/lib/models/AppleHealthWorkout";
+import ImportArchive from "@/lib/models/ImportArchive";
 import { parseAppleHealthXmlStream, type AppleHealthWorkout as AppleHealthWorkoutRecord } from "@/lib/parsers/appleHealthXmlParser";
 import { parseGpxRoute } from "@/lib/parsers/gpxRouteParser";
 import { correlateWorkoutsToRoutes } from "@/lib/parsers/workoutRouteCorrelation";
 import type { HealthEntryInput, AppleHealthImportResult } from "@/types/health";
+
+const ARCHIVE_TTL_DAYS = 30;
 
 function toDateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -73,6 +76,58 @@ function bytesToHuman(bytes: number): string {
     i++;
   }
   return `${value.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function buildArchiveExpiryDate(archivedAt: Date): Date {
+  return new Date(archivedAt.getTime() + ARCHIVE_TTL_DAYS * 24 * 60 * 60 * 1000);
+}
+
+async function archiveExistingAppleHealthData(snapshotId: string, archivedAt: Date) {
+  const expiresAt = buildArchiveExpiryDate(archivedAt);
+
+  const [existingEntriesCount, existingWorkoutsCount] = await Promise.all([
+    HealthEntry.countDocuments({ sourceType: "apple-health" }),
+    AppleHealthWorkout.countDocuments({}),
+  ]);
+
+  if (existingEntriesCount === 0 && existingWorkoutsCount === 0) {
+    return { archivedEntries: 0, archivedWorkouts: 0 };
+  }
+
+  const [existingEntries, existingWorkouts] = await Promise.all([
+    HealthEntry.find({ sourceType: "apple-health" }).lean(),
+    AppleHealthWorkout.find({}).lean(),
+  ]);
+
+  const archiveDocs = [
+    ...existingEntries.map((entry) => ({
+      snapshotId,
+      sourceType: "apple-health" as const,
+      collectionName: "HealthEntry" as const,
+      originalId: String(entry._id),
+      archivedAt,
+      expiresAt,
+      payload: entry as unknown as Record<string, unknown>,
+    })),
+    ...existingWorkouts.map((workout) => ({
+      snapshotId,
+      sourceType: "apple-health" as const,
+      collectionName: "AppleHealthWorkout" as const,
+      originalId: String(workout._id),
+      archivedAt,
+      expiresAt,
+      payload: workout as unknown as Record<string, unknown>,
+    })),
+  ];
+
+  if (archiveDocs.length > 0) {
+    await ImportArchive.insertMany(archiveDocs, { ordered: true });
+  }
+
+  return {
+    archivedEntries: existingEntries.length,
+    archivedWorkouts: existingWorkouts.length,
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -298,79 +353,80 @@ export async function POST(request: NextRequest) {
     });
 
     const importedAt = new Date();
+    const archiveInfo = await archiveExistingAppleHealthData(requestId, importedAt);
+
+    if (archiveInfo.archivedEntries > 0 || archiveInfo.archivedWorkouts > 0) {
+      warnings.push(`Replaced existing apple-health data and archived the previous snapshot for ${ARCHIVE_TTL_DAYS} days.`);
+      addLog("info", "Archived existing apple-health data", {
+        archivedEntries: archiveInfo.archivedEntries,
+        archivedWorkouts: archiveInfo.archivedWorkouts,
+        expiresAt: buildArchiveExpiryDate(importedAt).toISOString(),
+      });
+
+      await Promise.all([
+        HealthEntry.deleteMany({ sourceType: "apple-health" }),
+        AppleHealthWorkout.deleteMany({}),
+      ]);
+    }
 
     const dailyEntries = toHealthEntries(byDate);
-    const dailyOps = dailyEntries.map((entry) => ({
-      updateOne: {
-        filter: { date: entry.date },
-        update: {
-          $set: {
-            ...entry,
-            sourceType: "apple-health" as const,
-            sourceFile: filename,
-            importedAt,
-          },
-        },
-        upsert: true,
-      },
-    }));
-
-    const dailyWriteResult =
-      dailyOps.length > 0 ? await HealthEntry.bulkWrite(dailyOps, { ordered: false }) : null;
-
-    const inserted = dailyWriteResult?.upsertedCount ?? 0;
-    const updated = dailyWriteResult?.modifiedCount ?? 0;
-
-    const workoutOps = correlations.map((item) => {
+    const workoutDocs = correlations.map((item) => {
       const workout = item.workout;
       const externalId = `${workout.workoutActivityType}:${workout.startDate.toISOString()}:${workout.endDate.toISOString()}`;
+
       return {
-        updateOne: {
-          filter: { externalId },
-          update: {
-            $set: {
-              workoutType: workout.workoutActivityType,
-              startDate: workout.startDate,
-              endDate: workout.endDate,
-              durationMinutes: workout.durationMinutes,
-              totalEnergyBurned: workout.totalEnergyBurned,
-              totalDistance: workout.totalDistance,
-              sourceName: workout.sourceName,
-              sourceVersion: workout.sourceVersion,
-              routePath: item.route?.routePath ?? null,
-              routeSummary: item.route
-                ? {
-                    pointCount: item.route.pointCount,
-                    firstTimestamp: item.route.firstTimestamp,
-                    lastTimestamp: item.route.lastTimestamp,
-                    boundingBox: item.route.boundingBox,
-                    distanceEstimateMeters: item.route.distanceEstimateMeters,
-                  }
-                : null,
-              routeCorrelation: {
-                matched: item.matched,
-                confidence: item.confidence,
-                matchReason: item.matchReason,
-              },
-              stats: workout.stats ?? {},
-              importedAt,
-            },
-            $setOnInsert: { externalId },
-          },
-          upsert: true,
+        externalId,
+        workoutType: workout.workoutActivityType,
+        startDate: workout.startDate,
+        endDate: workout.endDate,
+        durationMinutes: workout.durationMinutes,
+        totalEnergyBurned: workout.totalEnergyBurned,
+        totalDistance: workout.totalDistance,
+        sourceName: workout.sourceName,
+        sourceVersion: workout.sourceVersion,
+        routePath: item.route?.routePath ?? null,
+        routeSummary: item.route
+          ? {
+              pointCount: item.route.pointCount,
+              firstTimestamp: item.route.firstTimestamp,
+              lastTimestamp: item.route.lastTimestamp,
+              boundingBox: item.route.boundingBox,
+              distanceEstimateMeters: item.route.distanceEstimateMeters,
+            }
+          : null,
+        routeCorrelation: {
+          matched: item.matched,
+          confidence: item.confidence,
+          matchReason: item.matchReason,
         },
+        stats: workout.stats ?? {},
+        importedAt,
       };
     });
 
-    const workoutWriteResult =
-      workoutOps.length > 0 ? await AppleHealthWorkout.bulkWrite(workoutOps, { ordered: false }) : null;
+    const [dailyInsertResult, workoutInsertResult] = await Promise.all([
+      dailyEntries.length > 0
+        ? HealthEntry.insertMany(
+            dailyEntries.map((entry) => ({
+              ...entry,
+              sourceType: "apple-health" as const,
+              sourceFile: filename,
+              importedAt,
+            })),
+            { ordered: true }
+          )
+        : [],
+      workoutDocs.length > 0 ? AppleHealthWorkout.insertMany(workoutDocs, { ordered: true }) : [],
+    ]);
+
+    const inserted = Array.isArray(dailyInsertResult) ? dailyInsertResult.length : 0;
+    const updated = 0;
     addLog("info", "Persistence complete", {
       dailyEntries: dailyEntries.length,
       inserted,
       updated,
       workoutsPersisted: correlations.length,
-      workoutUpserted: workoutWriteResult?.upsertedCount ?? 0,
-      workoutModified: workoutWriteResult?.modifiedCount ?? 0,
+      workoutInserted: Array.isArray(workoutInsertResult) ? workoutInsertResult.length : 0,
     });
 
     const result: AppleHealthImportResult = {

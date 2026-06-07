@@ -6,8 +6,8 @@ import MetricChart, { type MetricPoint } from "@/components/dashboard/MetricChar
 import MetricConclusion from "@/components/dashboard/MetricConclusion";
 import ReadinessGauge from "@/components/dashboard/ReadinessGauge";
 import SportSection from "@/components/dashboard/SportSection";
-import SourceDataTable from "@/components/dashboard/SourceDataTable";
 import { getMockSportData, type SportSession } from "@/lib/mockData";
+import { calcReadinessFromInput } from "@/lib/readiness";
 import { aggregateSeries, type AggregationMode, type Granularity } from "@/lib/timeAggregation";
 import { hrvInsight, readinessInsight, rhrInsight, sleepInsight, stepsInsight, vo2Insight } from "@/lib/dashboardInsights";
 import type { DashboardMetricsResponse, DashboardWorkoutDoc, HealthEntryDoc } from "@/types/health";
@@ -21,6 +21,22 @@ interface Props {
 
 function toLabel(date: Date | string): string {
   return new Date(date).toISOString().slice(0, 10);
+}
+
+function isAppleHealthEntry(entry: HealthEntryDoc): boolean {
+  return (entry.sourceType ?? "csv") === "apple-health";
+}
+
+function buildReadinessTrend(entries: HealthEntryDoc[]): number[] {
+  const sortedAsc = [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  return sortedAsc.map((entry, idx) => {
+    const previous = idx > 0 ? sortedAsc[idx - 1] : null;
+    return calcReadinessFromInput({
+      currentHrvMax: entry.hrv?.max ?? null,
+      yesterdaySleepMinutes: previous?.sleep ?? null,
+    });
+  });
 }
 
 function buildOverviewPoints(entries: HealthEntryDoc[]) {
@@ -197,16 +213,30 @@ export default function DashboardClient({ initialTab }: Props) {
     };
   }, [range]);
 
-  const overview = useMemo(() => buildOverviewPoints(metrics.entries), [metrics.entries]);
+  const appleHealthEntries = useMemo(() => metrics.entries.filter(isAppleHealthEntry), [metrics.entries]);
+  const workoutCount = metrics.workouts?.length ?? 0;
+  const appleHealthReadinessTrend = useMemo(() => buildReadinessTrend(appleHealthEntries), [appleHealthEntries]);
+  const appleHealthReadiness = useMemo(() => {
+    const sorted = [...appleHealthEntries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const latest = sorted[0] ?? null;
+    const previous = sorted.find((entry) => new Date(entry.date).getTime() < new Date(latest?.date ?? 0).getTime()) ?? null;
+
+    return calcReadinessFromInput({
+      currentHrvMax: latest?.hrv?.max ?? null,
+      yesterdaySleepMinutes: previous?.sleep ?? null,
+    });
+  }, [appleHealthEntries]);
+
+  const overview = useMemo(() => buildOverviewPoints(appleHealthEntries), [appleHealthEntries]);
   const overviewAgg = useMemo(() => ({
     vo2: aggregateSeries(overview.vo2, granularity, mode, { trimPartialEdges: mode === "total" }),
     rhr: aggregateSeries(overview.rhr, granularity, mode, { trimPartialEdges: mode === "total" }),
     hrv: aggregateSeries(overview.hrv, granularity, mode, { trimPartialEdges: mode === "total" }),
     sleep: aggregateSeries(overview.sleep, granularity, mode, { trimPartialEdges: mode === "total" }),
-    steps: aggregateSeries(metrics.entries.map((e) => ({ label: toLabel(e.date), value: e.steps })), granularity, mode, { trimPartialEdges: mode === "total" }),
+    steps: aggregateSeries(appleHealthEntries.map((e) => ({ label: toLabel(e.date), value: e.steps })), granularity, mode, { trimPartialEdges: mode === "total" }),
     readiness: aggregateSeries(
-      metrics.readinessTrend.map((val, idx) => {
-        const entriesAsc = [...metrics.entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      appleHealthReadinessTrend.map((val, idx) => {
+        const entriesAsc = [...appleHealthEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
         return {
           label: entriesAsc[idx] ? toLabel(entriesAsc[idx].date) : String(idx),
           value: val,
@@ -216,10 +246,10 @@ export default function DashboardClient({ initialTab }: Props) {
       mode,
       { trimPartialEdges: mode === "total" }
     ),
-  }), [overview, granularity, mode, metrics.entries, metrics.readinessTrend]);
+  }), [overview, granularity, mode, appleHealthEntries, appleHealthReadinessTrend]);
 
   const sportSections = useMemo(() => {
-    const workoutSessions = mapWorkoutSessions(metrics.workouts ?? [], metrics.entries);
+    const workoutSessions = mapWorkoutSessions(metrics.workouts ?? [], appleHealthEntries);
     if (workoutSessions.size > 0) {
       return [...workoutSessions.entries()]
         .sort((a, b) => a[0].localeCompare(b[0]))
@@ -231,7 +261,7 @@ export default function DashboardClient({ initialTab }: Props) {
     }
 
     const allSports = new Set<string>();
-    for (const entry of metrics.entries) {
+    for (const entry of appleHealthEntries) {
       const sport = sportFromEntry(entry);
       if (sport) {
         allSports.add(sport);
@@ -251,22 +281,38 @@ export default function DashboardClient({ initialTab }: Props) {
 
     return sortedSports.map((sport) => ({
       sport: titleCase(sport),
-      sessions: mapSessions(metrics.entries, sport),
+        sessions: mapSessions(appleHealthEntries, sport),
       isMock: false,
     }));
-  }, [metrics.entries, metrics.workouts]);
+  }, [appleHealthEntries, metrics.workouts]);
 
   const dataCoverage = useMemo(() => {
-    if (metrics.entries.length === 0) {
-      return "No imported entries";
+    if (appleHealthEntries.length === 0) {
+      return metrics.entries.length > 0 ? "CSV-only data hidden in V1" : "No Apple Health data imported yet";
     }
-    const sorted = [...metrics.entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const sorted = [...appleHealthEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     const first = toLabel(sorted[0].date);
     const last = toLabel(sorted[sorted.length - 1].date);
     return `${first} to ${last}`;
-  }, [metrics.entries]);
+  }, [appleHealthEntries, metrics.entries.length]);
 
-  const sourceSummary = useMemo(() => {
+  const importSummary = useMemo(() => {
+    const sports = new Set<string>();
+    for (const entry of appleHealthEntries) {
+      const sport = sportFromEntry(entry);
+      if (sport) {
+        sports.add(sport);
+      }
+    }
+
+    return {
+      appleHealthDays: appleHealthEntries.length,
+      workoutSessions: workoutCount,
+      sportsCaptured: sports.size,
+    };
+  }, [appleHealthEntries, workoutCount]);
+
+  const visibilitySummary = useMemo(() => {
     return metrics.entries.reduce(
       (acc, entry) => {
         const source = entry.sourceType ?? "csv";
@@ -281,12 +327,12 @@ export default function DashboardClient({ initialTab }: Props) {
     );
   }, [metrics.entries]);
 
-  const readinessText = readinessInsight(metrics.readiness, metrics.readinessTrend, range);
-  const vo2Text = vo2Insight(metrics.entries, metrics.profile ?? null, range);
-  const rhrText = rhrInsight(metrics.entries, range);
-  const hrvText = hrvInsight(metrics.entries, range);
-  const sleepText = sleepInsight(metrics.entries, range);
-  const stepsText = stepsInsight(metrics.entries, range);
+  const readinessText = readinessInsight(appleHealthReadiness, appleHealthReadinessTrend, range);
+  const vo2Text = vo2Insight(appleHealthEntries, metrics.profile ?? null, range);
+  const rhrText = rhrInsight(appleHealthEntries, range);
+  const hrvText = hrvInsight(appleHealthEntries, range);
+  const sleepText = sleepInsight(appleHealthEntries, range);
+  const stepsText = stepsInsight(appleHealthEntries, range);
 
   const chartInsights = [
     { title: "VO2 Max", chart: <MetricChart title="VO2 Max" tooltipKey="vo2Max" data={overviewAgg.vo2} unit="mL/min·kg" />, insight: vo2Text },
@@ -319,18 +365,24 @@ export default function DashboardClient({ initialTab }: Props) {
               <p className="mt-1 font-semibold text-gray-900">{dataCoverage}</p>
             </div>
             <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
-              <p className="text-xs uppercase tracking-wide text-gray-500">Days Imported</p>
-              <p className="mt-1 font-semibold text-gray-900">{metrics.entries.length}</p>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
               <p className="text-xs uppercase tracking-wide text-gray-500">Apple Health Days</p>
-              <p className="mt-1 font-semibold text-gray-900">{sourceSummary.appleHealth}</p>
+              <p className="mt-1 font-semibold text-gray-900">{importSummary.appleHealthDays}</p>
             </div>
             <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
-              <p className="text-xs uppercase tracking-wide text-gray-500">CSV Days</p>
-              <p className="mt-1 font-semibold text-gray-900">{sourceSummary.csv}</p>
+              <p className="text-xs uppercase tracking-wide text-gray-500">Workout Sessions</p>
+              <p className="mt-1 font-semibold text-gray-900">{importSummary.workoutSessions}</p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Sports Captured</p>
+              <p className="mt-1 font-semibold text-gray-900">{importSummary.sportsCaptured}</p>
             </div>
           </div>
+
+          {visibilitySummary.csv > 0 && appleHealthEntries.length === 0 && (
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              CSV rows are hidden in V1. Switch to V0 to inspect raw CSV source data.
+            </p>
+          )}
 
           <div className="mt-4 inline-flex rounded-lg border border-gray-200 bg-gray-100 p-1">
             <button
@@ -410,12 +462,20 @@ export default function DashboardClient({ initialTab }: Props) {
             <div className="grid gap-4 lg:grid-cols-2">
               <MetricChart title="Readiness Trend" tooltipKey="hrv" data={overviewAgg.readiness} unit="score" />
               <div className="space-y-3">
-                <ReadinessGauge score={metrics.readiness} />
+                <ReadinessGauge score={appleHealthReadiness} />
                 <MetricConclusion title="Readiness Score" summary={readinessText.summary} trend={readinessText.trend} action={readinessText.action} />
               </div>
             </div>
 
-            <SourceDataTable entries={metrics.entries} />
+            <div className="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-700">
+              <p className="font-semibold text-gray-900">Import Summary</p>
+              <p className="mt-1">
+                V1 shows Apple Health only: {importSummary.appleHealthDays} daily rows, {importSummary.workoutSessions} workout sessions, and {importSummary.sportsCaptured} sport types.
+              </p>
+              <p className="mt-1 text-gray-500">
+                CSV source rows remain available in V0 for detailed inspection.
+              </p>
+            </div>
           </section>
         )}
 
