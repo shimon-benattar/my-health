@@ -81,6 +81,27 @@ export interface DashboardMetricsResponse {
   >;
 }
 
+export interface WorkoutStatSummary {
+  avg: number | null;
+  min: number | null;
+  max: number | null;
+  sum: number | null;
+}
+
+export interface DashboardWorkoutStats {
+  heartRate?: WorkoutStatSummary | null;
+  distanceKm?: number | null;
+  activeCalories?: number | null;
+  stepCount?: number | null;
+  runningSpeedKmh?: WorkoutStatSummary | null;
+  runningStrideM?: WorkoutStatSummary | null;
+  runningGroundContactMs?: WorkoutStatSummary | null;
+  runningPowerW?: WorkoutStatSummary | null;
+  runningVerticalOscillationCm?: WorkoutStatSummary | null;
+  elevationAscendedCm?: number | null;
+  averageMETs?: number | null;
+}
+
 export interface DashboardWorkoutDoc {
   _id: string;
   externalId: string;
@@ -90,6 +111,7 @@ export interface DashboardWorkoutDoc {
   durationMinutes: number | null;
   totalEnergyBurned: number | null;
   totalDistance: number | null;
+  stats?: DashboardWorkoutStats | null;
   routeSummary?: {
     distanceEstimateMeters: number | null;
     pointCount: number;

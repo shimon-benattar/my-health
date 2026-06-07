@@ -10,6 +10,27 @@ export interface AppleHealthRecord {
   endDate: Date;
 }
 
+export interface WorkoutStatSummary {
+  avg: number | null;
+  min: number | null;
+  max: number | null;
+  sum: number | null;
+}
+
+export interface AppleHealthWorkoutStats {
+  heartRate?: WorkoutStatSummary;
+  distanceKm?: number | null;          // HKQuantityTypeIdentifierDistanceWalkingRunning sum
+  activeCalories?: number | null;      // HKQuantityTypeIdentifierActiveEnergyBurned sum
+  stepCount?: number | null;           // HKQuantityTypeIdentifierStepCount sum
+  runningSpeedKmh?: WorkoutStatSummary; // HKQuantityTypeIdentifierRunningSpeed
+  runningStrideM?: WorkoutStatSummary;  // HKQuantityTypeIdentifierRunningStrideLength
+  runningGroundContactMs?: WorkoutStatSummary; // HKQuantityTypeIdentifierRunningGroundContactTime
+  runningPowerW?: WorkoutStatSummary;   // HKQuantityTypeIdentifierRunningPower
+  runningVerticalOscillationCm?: WorkoutStatSummary; // HKQuantityTypeIdentifierRunningVerticalOscillation
+  elevationAscendedCm?: number | null; // MetadataEntry HKElevationAscended
+  averageMETs?: number | null;         // MetadataEntry HKAverageMETs
+}
+
 export interface AppleHealthWorkout {
   workoutActivityType: string;
   startDate: Date;
@@ -19,6 +40,7 @@ export interface AppleHealthWorkout {
   totalDistance: number | null;
   sourceName: string | null;
   sourceVersion: string | null;
+  stats: AppleHealthWorkoutStats;
 }
 
 export interface AppleHealthParseResult {
@@ -103,7 +125,72 @@ function parseWorkoutNode(node: sax.Tag): AppleHealthWorkout | null {
     totalDistance: parseNumeric(attrs.totalDistance),
     sourceName: attrs.sourceName ?? null,
     sourceVersion: attrs.sourceVersion ?? null,
+    stats: {},
   };
+}
+
+function parseStatSummary(attrs: Record<string, string>): WorkoutStatSummary {
+  return {
+    avg: parseNumeric(attrs.average),
+    min: parseNumeric(attrs.minimum),
+    max: parseNumeric(attrs.maximum),
+    sum: parseNumeric(attrs.sum),
+  };
+}
+
+function applyWorkoutStatistics(workout: AppleHealthWorkout, attrs: Record<string, string>): void {
+  const type = attrs.type ?? "";
+  const stat = parseStatSummary(attrs);
+
+  switch (type) {
+    case "HKQuantityTypeIdentifierHeartRate":
+      workout.stats.heartRate = stat;
+      break;
+    case "HKQuantityTypeIdentifierDistanceWalkingRunning":
+      workout.stats.distanceKm = stat.sum;
+      break;
+    case "HKQuantityTypeIdentifierActiveEnergyBurned":
+      workout.stats.activeCalories = stat.sum;
+      break;
+    case "HKQuantityTypeIdentifierStepCount":
+      workout.stats.stepCount = stat.sum;
+      break;
+    case "HKQuantityTypeIdentifierRunningSpeed":
+      workout.stats.runningSpeedKmh = stat;
+      break;
+    case "HKQuantityTypeIdentifierRunningStrideLength":
+      workout.stats.runningStrideM = stat;
+      break;
+    case "HKQuantityTypeIdentifierRunningGroundContactTime":
+      workout.stats.runningGroundContactMs = stat;
+      break;
+    case "HKQuantityTypeIdentifierRunningPower":
+      workout.stats.runningPowerW = stat;
+      break;
+    case "HKQuantityTypeIdentifierRunningVerticalOscillation":
+      workout.stats.runningVerticalOscillationCm = stat;
+      break;
+    default:
+      break;
+  }
+}
+
+function applyWorkoutMetadata(workout: AppleHealthWorkout, attrs: Record<string, string>): void {
+  const key = attrs.key ?? "";
+  const value = attrs.value ?? "";
+
+  if (key === "HKElevationAscended") {
+    // value like "4250 cm" or "42.5 m"
+    const match = value.match(/^([\d.]+)\s*(cm|m)?/i);
+    if (match) {
+      let cm = parseNumeric(match[1]);
+      if (cm !== null && match[2]?.toLowerCase() === "m") cm *= 100;
+      workout.stats.elevationAscendedCm = cm;
+    }
+  } else if (key === "HKAverageMETs") {
+    const match = value.match(/^([\d.]+)/);
+    if (match) workout.stats.averageMETs = parseNumeric(match[1]);
+  }
 }
 
 function createSaxParserState(handlers: AppleHealthStreamHandlers) {
@@ -116,8 +203,13 @@ function createSaxParserState(handlers: AppleHealthStreamHandlers) {
     workoutTypeCounts: {},
   };
 
+  // Track current open Workout so we can attach child WorkoutStatistics/MetadataEntry
+  let currentWorkout: AppleHealthWorkout | null = null;
+
   const parser = sax.createStream(true, { trim: true, normalize: true });
   parser.on("opentag", (node: sax.Tag) => {
+    const attrs = node.attributes as Record<string, string>;
+
     if (node.name === "Record") {
       const record = parseRecordNode(node);
       if (!record) {
@@ -134,11 +226,32 @@ function createSaxParserState(handlers: AppleHealthStreamHandlers) {
       const workout = parseWorkoutNode(node);
       if (!workout) {
         state.skippedWorkouts++;
+        currentWorkout = null;
         return;
       }
+      // Don't emit yet — collect child stats first
+      currentWorkout = workout;
+      return;
+    }
+
+    if (node.name === "WorkoutStatistics" && currentWorkout) {
+      applyWorkoutStatistics(currentWorkout, attrs);
+      return;
+    }
+
+    if (node.name === "MetadataEntry" && currentWorkout) {
+      applyWorkoutMetadata(currentWorkout, attrs);
+      return;
+    }
+  });
+
+  parser.on("closetag", (name: string) => {
+    if (name === "Workout" && currentWorkout) {
       state.workoutsProcessed++;
-      state.workoutTypeCounts[workout.workoutActivityType] = (state.workoutTypeCounts[workout.workoutActivityType] ?? 0) + 1;
-      handlers.onWorkout?.(workout);
+      state.workoutTypeCounts[currentWorkout.workoutActivityType] =
+        (state.workoutTypeCounts[currentWorkout.workoutActivityType] ?? 0) + 1;
+      handlers.onWorkout?.(currentWorkout);
+      currentWorkout = null;
     }
   });
 

@@ -1,11 +1,25 @@
 export interface SportSession {
   date: string;
+  startTime?: string;
+  endTime?: string;
   peakHeartRate: number;
+  avgHeartRate?: number;
+  minHeartRate?: number;
   calories: number;
   steps: number;
   durationMinutes?: number;
+  // distance — prefer XML stats (distanceKm), fallback to GPX haversine (distanceMeters)
+  distanceKm?: number;
   distanceMeters?: number;
   paceMinPerKm?: number;
+  avgSpeedKmh?: number;
+  maxSpeedKmh?: number;
+  avgStrideLengthM?: number;
+  avgGroundContactMs?: number;
+  avgRunningPowerW?: number;
+  avgVerticalOscillationCm?: number;
+  elevationAscendedM?: number;
+  averageMETs?: number;
 }
 
 const MOCK_SESSIONS: Record<string, SportSession[]> = {

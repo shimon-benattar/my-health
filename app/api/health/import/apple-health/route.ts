@@ -352,6 +352,7 @@ export async function POST(request: NextRequest) {
                 confidence: item.confidence,
                 matchReason: item.matchReason,
               },
+              stats: workout.stats ?? {},
               importedAt,
             },
             $setOnInsert: { externalId },

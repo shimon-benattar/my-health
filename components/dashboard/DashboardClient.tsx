@@ -98,28 +98,54 @@ function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntr
 
     const dateKey = toLabel(workout.startDate);
     const daily = dailyByDate.get(dateKey);
+    const s = workout.stats;
 
-    // Prefer GPX-computed distance over stored totalDistance (often null in Apple export)
-    const distanceMeters =
-      workout.routeSummary?.distanceEstimateMeters ??
-      (workout.totalDistance !== null && workout.totalDistance !== undefined
-        ? workout.totalDistance * 1000
-        : undefined);
+    // Distance: prefer XML stats (most accurate), then GPX haversine, then stored field
+    const distanceKmXml = s?.distanceKm ?? null;
+    const distanceMetersGpx = workout.routeSummary?.distanceEstimateMeters ?? null;
+    const distanceKmFinal = distanceKmXml
+      ?? (distanceMetersGpx !== null ? distanceMetersGpx / 1000 : null)
+      ?? (workout.totalDistance ?? null);
 
+    const distanceMeters = distanceKmFinal !== null ? distanceKmFinal * 1000 : undefined;
     const durationMinutes = workout.durationMinutes ?? undefined;
-    const paceMinPerKm =
-      distanceMeters && distanceMeters > 0 && durationMinutes
-        ? durationMinutes / (distanceMeters / 1000)
+
+    // Pace from XML average speed (more accurate than duration/distance)
+    const avgSpeedKmh = s?.runningSpeedKmh?.avg ?? null;
+    const paceMinPerKm = avgSpeedKmh && avgSpeedKmh > 0
+      ? 60 / avgSpeedKmh
+      : (distanceKmFinal && distanceKmFinal > 0 && durationMinutes)
+        ? durationMinutes / distanceKmFinal
         : undefined;
+
+    const calories = s?.activeCalories
+      ?? workout.totalEnergyBurned
+      ?? daily?.activeCalories
+      ?? 0;
 
     const session: SportSession = {
       date: dateKey,
-      peakHeartRate: daily?.heartRate?.max ?? 0,
-      calories: workout.totalEnergyBurned ?? daily?.activeCalories ?? 0,
-      steps: daily?.steps ?? 0,
+      startTime: new Date(workout.startDate).toISOString(),
+      endTime: new Date(workout.endDate).toISOString(),
+      peakHeartRate: s?.heartRate?.max ?? daily?.heartRate?.max ?? 0,
+      avgHeartRate: s?.heartRate?.avg ?? undefined,
+      minHeartRate: s?.heartRate?.min ?? undefined,
+      calories,
+      steps: s?.stepCount ?? daily?.steps ?? 0,
       durationMinutes,
+      distanceKm: distanceKmFinal ?? undefined,
       distanceMeters,
       paceMinPerKm,
+      avgSpeedKmh: avgSpeedKmh ?? undefined,
+      maxSpeedKmh: s?.runningSpeedKmh?.max ?? undefined,
+      avgStrideLengthM: s?.runningStrideM?.avg ?? undefined,
+      avgGroundContactMs: s?.runningGroundContactMs?.avg ?? undefined,
+      avgRunningPowerW: s?.runningPowerW?.avg ?? undefined,
+      avgVerticalOscillationCm: s?.runningVerticalOscillationCm?.avg ?? undefined,
+      elevationAscendedM: s?.elevationAscendedCm !== undefined && s?.elevationAscendedCm !== null
+        ? s.elevationAscendedCm / 100
+        : undefined,
+      averageMETs: s?.averageMETs ?? undefined,
     };
 
     const existing = bySport.get(sport) ?? [];

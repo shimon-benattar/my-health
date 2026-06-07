@@ -104,6 +104,7 @@ export async function GET(request: NextRequest) {
       durationMinutes: number | null;
       totalEnergyBurned: number | null;
       totalDistance: number | null;
+      stats?: Record<string, unknown> | null;
       routeSummary?: {
         distanceEstimateMeters: number | null;
         pointCount: number;
@@ -122,6 +123,7 @@ export async function GET(request: NextRequest) {
       durationMinutes: workout.durationMinutes,
       totalEnergyBurned: workout.totalEnergyBurned,
       totalDistance: workout.totalDistance,
+      stats: workout.stats ?? null,
       routeSummary: workout.routeSummary ?? null,
       routeCorrelation: workout.routeCorrelation,
     }));
