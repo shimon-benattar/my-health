@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 
 const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
@@ -21,6 +22,11 @@ function formatBuildDate(input?: string): string {
 
 export default function AboutMenu() {
   const [isOpen, setIsOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -44,9 +50,9 @@ export default function AboutMenu() {
         About
       </button>
 
-      {isOpen && (
+      {isOpen && mounted && createPortal(
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 px-4 py-10 sm:py-16"
+          className="fixed inset-0 z-[120] flex items-start justify-center overflow-y-auto bg-black/50 px-4 py-10 sm:py-16"
           onClick={() => setIsOpen(false)}
           role="presentation"
         >
@@ -102,7 +108,8 @@ export default function AboutMenu() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

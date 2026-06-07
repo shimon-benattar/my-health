@@ -20,6 +20,13 @@ export interface SportSession {
   avgVerticalOscillationCm?: number;
   elevationAscendedM?: number;
   averageMETs?: number;
+  kmSplits?: Array<{
+    kmIndex: number;
+    distanceKm: number;
+    paceMinPerKm: number | null;
+    avgHeartRate: number | null;
+    maxHeartRate: number | null;
+  }>;
 }
 
 const MOCK_SESSIONS: Record<string, SportSession[]> = {

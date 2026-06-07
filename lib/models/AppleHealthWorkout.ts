@@ -54,6 +54,13 @@ export interface IAppleHealthWorkout extends Document {
   routeSummary: RouteSummary | null;
   routeCorrelation: RouteCorrelation;
   stats: WorkoutStats;
+  kmSplits?: Array<{
+    kmIndex: number;
+    distanceKm: number;
+    paceMinPerKm: number | null;
+    avgHeartRate: number | null;
+    maxHeartRate: number | null;
+  }>;
   importedAt: Date;
 }
 
@@ -114,6 +121,17 @@ const WorkoutStatsSchema = new Schema(
   { _id: false }
 );
 
+const KmSplitSchema = new Schema(
+  {
+    kmIndex: { type: Number, required: true },
+    distanceKm: { type: Number, required: true },
+    paceMinPerKm: { type: Number, default: null },
+    avgHeartRate: { type: Number, default: null },
+    maxHeartRate: { type: Number, default: null },
+  },
+  { _id: false }
+);
+
 const AppleHealthWorkoutSchema = new Schema<IAppleHealthWorkout>(
   {
     externalId: { type: String, required: true, unique: true, index: true },
@@ -129,6 +147,7 @@ const AppleHealthWorkoutSchema = new Schema<IAppleHealthWorkout>(
     routeSummary: { type: RouteSummarySchema, default: null },
     routeCorrelation: { type: RouteCorrelationSchema, required: true },
     stats: { type: WorkoutStatsSchema, default: {} },
+    kmSplits: { type: [KmSplitSchema], default: [] },
     importedAt: { type: Date, required: true, index: true },
   },
   { timestamps: false, collection: "apple_health_workouts" }

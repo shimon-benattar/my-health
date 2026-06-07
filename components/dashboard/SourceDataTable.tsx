@@ -11,6 +11,8 @@ type SourceTypeFilter = "all" | "csv" | "apple-health";
 
 interface Props {
   entries: HealthEntryDoc[];
+  hideSourceFilter?: boolean;
+  title?: string;
 }
 
 interface ColumnFilter {
@@ -51,11 +53,11 @@ function cellText(value: number | string | null | undefined): string {
   return String(value);
 }
 
-export default function SourceDataTable({ entries }: Props) {
+export default function SourceDataTable({ entries, hideSourceFilter = false, title = "Source Data" }: Props) {
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [sourceType, setSourceType] = useState<SourceTypeFilter>("all");
+  const [sourceType, setSourceType] = useState<SourceTypeFilter>(hideSourceFilter ? "apple-health" : "all");
   const [activeFilter, setActiveFilter] = useState<ColumnFilter | null>(null);
   const [draftFilter, setDraftFilter] = useState<ColumnFilter>({ column: "steps", operator: "gt", value: "" });
 
@@ -127,7 +129,7 @@ export default function SourceDataTable({ entries }: Props) {
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" data-testid="source-data-section">
       <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Source Data</h3>
+          <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
           <p className="text-xs text-slate-500">Click a column, then filter with greater than, less than, or equal like a spreadsheet.</p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -138,16 +140,18 @@ export default function SourceDataTable({ entries }: Props) {
             placeholder="Smart search: date, workout, steps..."
             className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400"
           />
-          <select
-            aria-label="source type"
-            value={sourceType}
-            onChange={(e) => setSourceType(e.target.value as SourceTypeFilter)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm"
-          >
-            <option value="all">All sources</option>
-            <option value="csv">CSV</option>
-            <option value="apple-health">Apple Health XML</option>
-          </select>
+          {!hideSourceFilter && (
+            <select
+              aria-label="source type"
+              value={sourceType}
+              onChange={(e) => setSourceType(e.target.value as SourceTypeFilter)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm"
+            >
+              <option value="all">All sources</option>
+              <option value="csv">CSV</option>
+              <option value="apple-health">Apple Health XML</option>
+            </select>
+          )}
           <select
             aria-label="filter column"
             value={draftFilter.column}
@@ -191,7 +195,7 @@ export default function SourceDataTable({ entries }: Props) {
               setActiveFilter(null);
               setDraftFilter({ column: "steps", operator: "gt", value: "" });
               setQuery("");
-              setSourceType("all");
+              setSourceType(hideSourceFilter ? "apple-health" : "all");
             }}
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm"
           >

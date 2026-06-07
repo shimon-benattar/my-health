@@ -66,15 +66,15 @@ export default function Home() {
             View Dashboard →
           </Link>
           <Link
-            href="/dashboard"
+            href="#import-data"
             data-testid="import-data-link"
             className="rounded-xl border border-white/20 bg-white/10 px-8 py-3.5 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-white/20"
           >
-            Import Health Data
+            Import ZIP Data
           </Link>
         </div>
 
-        <div className="mt-10 w-full max-w-2xl animate-fade-in-up-delay-2 text-left">
+        <div id="import-data" className="mt-10 w-full max-w-2xl animate-fade-in-up-delay-2 text-left">
           <UploadForm compact />
         </div>
       </div>

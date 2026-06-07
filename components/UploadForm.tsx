@@ -20,7 +20,6 @@ export default function UploadForm({ compact = false }: Props) {
   const [status, setStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
   const [result, setResult] = useState<IngestionResult | AppleHealthImportResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
-  const [weightKg, setWeightKg] = useState<string>("85");
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [uploadSpeedMbps, setUploadSpeedMbps] = useState<number | null>(null);
@@ -61,14 +60,12 @@ export default function UploadForm({ compact = false }: Props) {
   async function postFormWithProgress(
     url: string,
     file: File,
-    weight: string,
     onProgress: (loaded: number, total: number, elapsedSeconds: number) => void
   ): Promise<{ ok: boolean; status: number; body: unknown }> {
     // Keep deterministic fetch behavior in test environment.
     if (process.env.NODE_ENV === "test" || typeof XMLHttpRequest === "undefined") {
       const formData = new FormData();
       formData.append("file", file);
-      if (weight.trim() !== "") formData.append("weightKg", weight.trim());
       const res = await fetch(url, { method: "POST", body: formData });
       const body = await res.json().catch(() => ({ error: "Unknown error" }));
       return { ok: res.ok, status: res.status, body };
@@ -108,7 +105,6 @@ export default function UploadForm({ compact = false }: Props) {
 
       const formData = new FormData();
       formData.append("file", file);
-      if (weight.trim() !== "") formData.append("weightKg", weight.trim());
       xhr.send(formData);
     });
   }
@@ -216,7 +212,7 @@ export default function UploadForm({ compact = false }: Props) {
         const importRes = await fetch("/api/health/import/apple-health", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ blobUrl: blob.url, weightKg: weightKg.trim() || undefined }),
+          body: JSON.stringify({ blobUrl: blob.url }),
         });
         const importBody = await importRes.json().catch(() => ({ error: "Invalid JSON response" })) as IngestionResult | AppleHealthImportResult | { error: string };
 
@@ -235,7 +231,7 @@ export default function UploadForm({ compact = false }: Props) {
       }
 
       // Small files: use the existing direct-upload path.
-      const firstResponse = await postFormWithProgress("/api/health/upload", selectedFile, weightKg, updateProgress);
+      const firstResponse = await postFormWithProgress("/api/health/upload", selectedFile, updateProgress);
       let finalResponse = firstResponse;
 
       if (!firstResponse.ok) {
@@ -253,7 +249,6 @@ export default function UploadForm({ compact = false }: Props) {
           finalResponse = await postFormWithProgress(
             "/api/health/import/apple-health",
             selectedFile,
-            weightKg,
             updateProgress
           );
           if (!finalResponse.ok) {
@@ -304,39 +299,19 @@ export default function UploadForm({ compact = false }: Props) {
         />
 
         {/* Visible label acting as the "Browse" button */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-gray-200 bg-gray-50 p-3">
           <label
             htmlFor="zip-file-input"
             className="cursor-pointer rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 active:bg-gray-100"
           >
-            Browse…
+            Choose ZIP
           </label>
           <span className="truncate text-sm text-gray-500" data-testid="file-name">
             {selectedFile ? selectedFile.name : "No file chosen"}
           </span>
-        </div>
-
-        {selectedFile && (
-          <p className="text-xs text-gray-500" data-testid="selected-file-size">
-            File size: {formatFileSize(selectedFile.size)}
-          </p>
-        )}
-
-        <div className="grid gap-2">
-          <label htmlFor="weight-kg" className="text-sm font-medium text-gray-700">
-            Current weight (kg)
-          </label>
-          <input
-            id="weight-kg"
-            data-testid="weight-input"
-            type="number"
-            min="1"
-            max="400"
-            step="0.1"
-            value={weightKg}
-            onChange={(e) => setWeightKg(e.target.value)}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
-          />
+          <span className="ml-auto text-xs text-gray-500" data-testid="selected-file-size">
+            {selectedFile ? `Size: ${formatFileSize(selectedFile.size)}` : ""}
+          </span>
         </div>
 
         <button
@@ -344,7 +319,7 @@ export default function UploadForm({ compact = false }: Props) {
           disabled={status === "uploading" || !selectedFile}
           className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {status === "uploading" ? "Uploading…" : "Upload ZIP"}
+          {status === "uploading" ? "Uploading…" : "Start Import"}
         </button>
       </form>
 

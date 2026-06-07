@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import MetricChart, { type MetricPoint } from "@/components/dashboard/MetricChart";
 import MetricConclusion from "@/components/dashboard/MetricConclusion";
 import ReadinessGauge from "@/components/dashboard/ReadinessGauge";
+import SourceDataTable from "@/components/dashboard/SourceDataTable";
 import SportSection from "@/components/dashboard/SportSection";
 import { getMockSportData, type SportSession } from "@/lib/mockData";
 import { calcReadinessFromInput } from "@/lib/readiness";
@@ -21,6 +22,46 @@ interface Props {
 
 function toLabel(date: Date | string): string {
   return new Date(date).toISOString().slice(0, 10);
+}
+
+function toDisplayDate(date: Date | string): string {
+  return new Date(date).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function toInputDate(date: Date | string): string {
+  return new Date(date).toISOString().slice(0, 10);
+}
+
+function normalizeSportKey(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+
+  const compact = raw
+    .trim()
+    .replace(/^HKWorkoutActivityType/i, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase();
+
+  if (!compact) return null;
+  if (compact.includes("run")) return "running";
+  if (compact.includes("padel")) return "padel";
+  if (compact.includes("racketball") || compact.includes("racquetball")) return "racketball";
+  if (compact.includes("walk")) return "walking";
+  if (compact.includes("cycle") || compact.includes("bike")) return "cycling";
+  if (compact.includes("snowboard")) return "snowboarding";
+  if (compact.includes("weight") || compact.includes("strength")) return "weightlifting";
+
+  return compact.replace(/\s+/g, " ").trim();
+}
+
+function sportLabel(key: string): string {
+  if (key === "racketball") return "Padel (Racketball source)";
+  return key.charAt(0).toUpperCase() + key.slice(1);
 }
 
 function isAppleHealthEntry(entry: HealthEntryDoc): boolean {
@@ -47,32 +88,8 @@ function buildOverviewPoints(entries: HealthEntryDoc[]) {
     rhr: sorted.map((e) => ({ label: toLabel(e.date), value: e.restingHeartRate })) as MetricPoint[],
     hrv: sorted.map((e) => ({ label: toLabel(e.date), value: e.hrv?.max ?? null })) as MetricPoint[],
     sleep: sorted.map((e) => ({ label: toLabel(e.date), value: e.sleep })) as MetricPoint[],
+    activeCalories: sorted.map((e) => ({ label: toLabel(e.date), value: e.activeCalories })) as MetricPoint[],
   };
-}
-
-function sportFromEntry(entry: HealthEntryDoc): string | null {
-  const sport = entry.sportType?.trim().toLowerCase();
-  if (sport) return sport;
-
-  const workout = entry.workoutType?.trim().toLowerCase();
-  if (!workout) return null;
-  if (workout.includes("running")) return "running";
-  if (workout.includes("padel")) return "padel";
-  if (workout.includes("racketball")) return "racketball";
-  if (workout.includes("walk")) return "walking";
-  if (workout.includes("cycling") || workout.includes("bike")) return "cycling";
-  return workout;
-}
-
-function sportFromWorkoutType(raw: string): string | null {
-  const value = raw.trim().toLowerCase();
-  if (!value) return null;
-  if (value.includes("running")) return "running";
-  if (value.includes("padel")) return "padel";
-  if (value.includes("racketball")) return "racketball";
-  if (value.includes("walk")) return "walking";
-  if (value.includes("cycle") || value.includes("bike")) return "cycling";
-  return value;
 }
 
 function mapSessions(entries: HealthEntryDoc[], sport: string): SportSession[] {
@@ -80,8 +97,9 @@ function mapSessions(entries: HealthEntryDoc[], sport: string): SportSession[] {
 
   return entries
     .filter((e) => {
-      const workout = e.workoutType?.trim().toLowerCase() ?? "";
-      return sportFromEntry(e) === normalized || workout.includes(normalized) || (normalized === "racketball" && workout.includes("padel"));
+      const sportType = normalizeSportKey(e.sportType);
+      const workoutType = normalizeSportKey(e.workoutType);
+      return sportType === normalized || workoutType === normalized || (normalized === "padel" && workoutType === "racketball");
     })
     .filter((e) => e.heartRate?.max != null)
     .map((e) => ({
@@ -94,13 +112,6 @@ function mapSessions(entries: HealthEntryDoc[], sport: string): SportSession[] {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function titleCase(input: string): string {
-  return input
-    .split(/\s+/)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
 function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntryDoc[]) {
   const dailyByDate = new Map<string, HealthEntryDoc>();
   for (const entry of entries) {
@@ -109,14 +120,13 @@ function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntr
 
   const bySport = new Map<string, SportSession[]>();
   for (const workout of workouts) {
-    const sport = sportFromWorkoutType(workout.workoutType);
+    const sport = normalizeSportKey(workout.workoutType);
     if (!sport) continue;
 
     const dateKey = toLabel(workout.startDate);
     const daily = dailyByDate.get(dateKey);
     const s = workout.stats;
 
-    // Distance: prefer XML stats (most accurate), then GPX haversine, then stored field
     const distanceKmXml = s?.distanceKm ?? null;
     const distanceMetersGpx = workout.routeSummary?.distanceEstimateMeters ?? null;
     const distanceKmFinal = distanceKmXml
@@ -126,7 +136,6 @@ function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntr
     const distanceMeters = distanceKmFinal !== null ? distanceKmFinal * 1000 : undefined;
     const durationMinutes = workout.durationMinutes ?? undefined;
 
-    // Pace from XML average speed (more accurate than duration/distance)
     const avgSpeedKmh = s?.runningSpeedKmh?.avg ?? null;
     const paceMinPerKm = avgSpeedKmh && avgSpeedKmh > 0
       ? 60 / avgSpeedKmh
@@ -162,6 +171,7 @@ function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntr
         ? s.elevationAscendedCm / 100
         : undefined,
       averageMETs: s?.averageMETs ?? undefined,
+      kmSplits: workout.kmSplits ?? undefined,
     };
 
     const existing = bySport.get(sport) ?? [];
@@ -180,6 +190,11 @@ export default function DashboardClient({ initialTab }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [metrics, setMetrics] = useState<DashboardMetricsResponse>({ entries: [], readiness: 0, readinessTrend: [] });
+  const [showDateFilter, setShowDateFilter] = useState(false);
+  const [customStartDate, setCustomStartDate] = useState<string>("");
+  const [customEndDate, setCustomEndDate] = useState<string>("");
+  const [selectedSport, setSelectedSport] = useState<string>("all");
+  const [showSleepDrilldown, setShowSleepDrilldown] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -188,7 +203,18 @@ export default function DashboardClient({ initialTab }: Props) {
       setLoading(true);
       setError("");
       try {
-        const res = await fetch(`/api/dashboard/metrics?range=${range}`, { cache: "no-store" });
+        await fetch("/api/health/augment/shabbat", {
+          method: "POST",
+          cache: "no-store",
+        }).catch(() => {
+          // Non-blocking: dashboard can still load without one-time augmentation.
+        });
+
+        const params = new URLSearchParams({ range });
+        if (customStartDate) params.set("startDate", customStartDate);
+        if (customEndDate) params.set("endDate", customEndDate);
+
+        const res = await fetch(`/api/dashboard/metrics?${params.toString()}`, { cache: "no-store" });
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
@@ -211,9 +237,63 @@ export default function DashboardClient({ initialTab }: Props) {
     return () => {
       active = false;
     };
-  }, [range]);
+  }, [range, customStartDate, customEndDate]);
 
   const appleHealthEntries = useMemo(() => metrics.entries.filter(isAppleHealthEntry), [metrics.entries]);
+
+  const earliestDate = useMemo(() => {
+    if (appleHealthEntries.length === 0) return "";
+    const sorted = [...appleHealthEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return toInputDate(sorted[0].date);
+  }, [appleHealthEntries]);
+
+  const latestDate = useMemo(() => {
+    if (appleHealthEntries.length === 0) return "";
+    const sorted = [...appleHealthEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return toInputDate(sorted[sorted.length - 1].date);
+  }, [appleHealthEntries]);
+
+  useEffect(() => {
+    if (!customStartDate && earliestDate) {
+      setCustomStartDate(earliestDate);
+    }
+    if (!customEndDate && latestDate) {
+      setCustomEndDate(latestDate);
+    }
+  }, [earliestDate, latestDate, customStartDate, customEndDate]);
+
+  const workoutSessionsMap = useMemo(() => mapWorkoutSessions(metrics.workouts ?? [], appleHealthEntries), [metrics.workouts, appleHealthEntries]);
+
+  const availableSports = useMemo(() => {
+    const fromWorkouts = [...workoutSessionsMap.keys()];
+    if (fromWorkouts.length > 0) {
+      return fromWorkouts.sort((a, b) => a.localeCompare(b));
+    }
+
+    const fromEntries = new Set<string>();
+    for (const entry of appleHealthEntries) {
+      const sport = normalizeSportKey(entry.sportType) ?? normalizeSportKey(entry.workoutType);
+      if (sport) fromEntries.add(sport);
+    }
+    return [...fromEntries].sort((a, b) => a.localeCompare(b));
+  }, [workoutSessionsMap, appleHealthEntries]);
+
+  useEffect(() => {
+    if (availableSports.length === 0) {
+      setSelectedSport("all");
+      return;
+    }
+
+    if (selectedSport === "all") {
+      setSelectedSport(availableSports.includes("running") ? "running" : availableSports[0]);
+      return;
+    }
+
+    if (!availableSports.includes(selectedSport)) {
+      setSelectedSport(availableSports.includes("running") ? "running" : availableSports[0]);
+    }
+  }, [availableSports, selectedSport]);
+
   const workoutCount = metrics.workouts?.length ?? 0;
   const appleHealthReadinessTrend = useMemo(() => buildReadinessTrend(appleHealthEntries), [appleHealthEntries]);
   const appleHealthReadiness = useMemo(() => {
@@ -229,11 +309,12 @@ export default function DashboardClient({ initialTab }: Props) {
 
   const overview = useMemo(() => buildOverviewPoints(appleHealthEntries), [appleHealthEntries]);
   const overviewAgg = useMemo(() => ({
-    vo2: aggregateSeries(overview.vo2, granularity, mode, { trimPartialEdges: mode === "total" }),
-    rhr: aggregateSeries(overview.rhr, granularity, mode, { trimPartialEdges: mode === "total" }),
-    hrv: aggregateSeries(overview.hrv, granularity, mode, { trimPartialEdges: mode === "total" }),
-    sleep: aggregateSeries(overview.sleep, granularity, mode, { trimPartialEdges: mode === "total" }),
-    steps: aggregateSeries(appleHealthEntries.map((e) => ({ label: toLabel(e.date), value: e.steps })), granularity, mode, { trimPartialEdges: mode === "total" }),
+    vo2: aggregateSeries(overview.vo2, granularity, mode),
+    rhr: aggregateSeries(overview.rhr, granularity, mode),
+    hrv: aggregateSeries(overview.hrv, granularity, mode),
+    sleep: aggregateSeries(overview.sleep, granularity, mode),
+    activeCalories: aggregateSeries(overview.activeCalories, granularity, mode),
+    steps: aggregateSeries(appleHealthEntries.map((e) => ({ label: toLabel(e.date), value: e.steps })), granularity, mode),
     readiness: aggregateSeries(
       appleHealthReadinessTrend.map((val, idx) => {
         const entriesAsc = [...appleHealthEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -243,35 +324,29 @@ export default function DashboardClient({ initialTab }: Props) {
         };
       }),
       granularity,
-      mode,
-      { trimPartialEdges: mode === "total" }
+      mode
     ),
   }), [overview, granularity, mode, appleHealthEntries, appleHealthReadinessTrend]);
 
   const sportSections = useMemo(() => {
-    const workoutSessions = mapWorkoutSessions(metrics.workouts ?? [], appleHealthEntries);
-    if (workoutSessions.size > 0) {
-      return [...workoutSessions.entries()]
+    if (workoutSessionsMap.size > 0) {
+      const allSections = [...workoutSessionsMap.entries()]
         .sort((a, b) => a[0].localeCompare(b[0]))
         .map(([sport, sessions]) => ({
-          sport: titleCase(sport),
+          key: sport,
+          sport: sportLabel(sport),
           sessions: sessions.sort((a, b) => a.date.localeCompare(b.date)),
           isMock: false,
         }));
+
+      if (selectedSport === "all") return allSections;
+      return allSections.filter((section) => section.key === selectedSport);
     }
 
-    const allSports = new Set<string>();
-    for (const entry of appleHealthEntries) {
-      const sport = sportFromEntry(entry);
-      if (sport) {
-        allSports.add(sport);
-      }
-    }
-
-    const sortedSports = [...allSports].sort((a, b) => a.localeCompare(b));
-    if (sortedSports.length === 0) {
+    if (availableSports.length === 0) {
       return [
         {
+          key: "padel",
           sport: "Padel",
           sessions: getMockSportData("padel"),
           isMock: true,
@@ -279,53 +354,44 @@ export default function DashboardClient({ initialTab }: Props) {
       ];
     }
 
-    return sortedSports.map((sport) => ({
-      sport: titleCase(sport),
-        sessions: mapSessions(appleHealthEntries, sport),
+    const mapped = availableSports.map((sport) => ({
+      key: sport,
+      sport: sportLabel(sport),
+      sessions: mapSessions(appleHealthEntries, sport),
       isMock: false,
     }));
-  }, [appleHealthEntries, metrics.workouts]);
+
+    if (selectedSport === "all") return mapped;
+    return mapped.filter((section) => section.key === selectedSport);
+  }, [workoutSessionsMap, availableSports, selectedSport, appleHealthEntries]);
 
   const dataCoverage = useMemo(() => {
     if (appleHealthEntries.length === 0) {
-      return metrics.entries.length > 0 ? "CSV-only data hidden in V1" : "No Apple Health data imported yet";
+      return "No Apple Health data imported yet";
     }
     const sorted = [...appleHealthEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    const first = toLabel(sorted[0].date);
-    const last = toLabel(sorted[sorted.length - 1].date);
+    const first = toDisplayDate(sorted[0].date);
+    const last = toDisplayDate(sorted[sorted.length - 1].date);
     return `${first} to ${last}`;
-  }, [appleHealthEntries, metrics.entries.length]);
+  }, [appleHealthEntries]);
 
   const importSummary = useMemo(() => {
-    const sports = new Set<string>();
-    for (const entry of appleHealthEntries) {
-      const sport = sportFromEntry(entry);
-      if (sport) {
-        sports.add(sport);
-      }
-    }
-
     return {
-      appleHealthDays: appleHealthEntries.length,
       workoutSessions: workoutCount,
-      sportsCaptured: sports.size,
+      sportsCaptured: availableSports.length,
     };
-  }, [appleHealthEntries, workoutCount]);
+  }, [workoutCount, availableSports.length]);
 
-  const visibilitySummary = useMemo(() => {
-    return metrics.entries.reduce(
-      (acc, entry) => {
-        const source = entry.sourceType ?? "csv";
-        if (source === "apple-health") {
-          acc.appleHealth += 1;
-        } else {
-          acc.csv += 1;
-        }
-        return acc;
-      },
-      { csv: 0, appleHealth: 0 }
-    );
-  }, [metrics.entries]);
+  const sleepDrilldownRows = useMemo(() => {
+    return [...appleHealthEntries]
+      .filter((e) => e.sleepDetail || e.sleepHeartRate)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 60);
+  }, [appleHealthEntries]);
+
+  const totalLowSleepHrAlerts = useMemo(() => {
+    return sleepDrilldownRows.reduce((acc, row) => acc + (row.sleepHeartRate?.lowAlerts ?? 0), 0);
+  }, [sleepDrilldownRows]);
 
   const readinessText = readinessInsight(appleHealthReadiness, appleHealthReadinessTrend, range);
   const vo2Text = vo2Insight(appleHealthEntries, metrics.profile ?? null, range);
@@ -339,8 +405,18 @@ export default function DashboardClient({ initialTab }: Props) {
     { title: "Resting Heart Rate", chart: <MetricChart title="Resting Heart Rate" tooltipKey="rhr" data={overviewAgg.rhr} unit="bpm" />, insight: rhrText },
     { title: "HRV", chart: <MetricChart title="HRV" tooltipKey="hrv" data={overviewAgg.hrv} unit="ms" />, insight: hrvText },
     { title: "Sleep", chart: <MetricChart title="Sleep" tooltipKey="sleep" data={overviewAgg.sleep} unit="min" />, insight: sleepText },
+    { title: "Active Calories", chart: <MetricChart title="Active Calories" tooltipKey="steps" data={overviewAgg.activeCalories} unit="kcal" />, insight: stepsText },
     { title: "Steps", chart: <MetricChart title="Steps" tooltipKey="steps" data={overviewAgg.steps} unit="steps" />, insight: stepsText },
   ];
+
+  function resetAllFilters() {
+    setRange("all");
+    setGranularity("day");
+    setMode("average");
+    setSelectedSport("all");
+    setCustomStartDate(earliestDate);
+    setCustomEndDate(latestDate);
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -357,17 +433,17 @@ export default function DashboardClient({ initialTab }: Props) {
               <Link href="/dashboard?version=v0" className="rounded bg-white px-2 py-1 font-semibold text-gray-700">V0</Link>
             </div>
           </div>
-          <p className="mt-1 text-sm text-gray-600">V1 uses all imported history by default and dynamically adapts charts and sport views to your actual imported Apple Health data.</p>
+          <p className="mt-1 text-sm text-gray-600">V1 shows Apple Health imports only and focuses on usable daily and workout insights.</p>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
+            <button
+              type="button"
+              onClick={() => setShowDateFilter((prev) => !prev)}
+              className="rounded-lg border border-gray-200 bg-white p-3 text-left text-sm hover:bg-gray-50"
+            >
               <p className="text-xs uppercase tracking-wide text-gray-500">Date Coverage</p>
               <p className="mt-1 font-semibold text-gray-900">{dataCoverage}</p>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
-              <p className="text-xs uppercase tracking-wide text-gray-500">Apple Health Days</p>
-              <p className="mt-1 font-semibold text-gray-900">{importSummary.appleHealthDays}</p>
-            </div>
+            </button>
             <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
               <p className="text-xs uppercase tracking-wide text-gray-500">Workout Sessions</p>
               <p className="mt-1 font-semibold text-gray-900">{importSummary.workoutSessions}</p>
@@ -376,12 +452,40 @@ export default function DashboardClient({ initialTab }: Props) {
               <p className="text-xs uppercase tracking-wide text-gray-500">Sports Captured</p>
               <p className="mt-1 font-semibold text-gray-900">{importSummary.sportsCaptured}</p>
             </div>
+            <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Current Readiness</p>
+              <p className="mt-1 font-semibold text-gray-900">{appleHealthReadiness}</p>
+            </div>
           </div>
 
-          {visibilitySummary.csv > 0 && appleHealthEntries.length === 0 && (
-            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              CSV rows are hidden in V1. Switch to V0 to inspect raw CSV source data.
-            </p>
+          {showDateFilter && (
+            <div className="mt-3 rounded-lg border border-gray-200 bg-white p-3 text-sm">
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="text-xs font-medium text-gray-600">
+                  Start date
+                  <input
+                    type="date"
+                    value={customStartDate}
+                    onChange={(e) => setCustomStartDate(e.target.value)}
+                    className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                  />
+                </label>
+                <label className="text-xs font-medium text-gray-600">
+                  End date
+                  <input
+                    type="date"
+                    value={customEndDate}
+                    onChange={(e) => setCustomEndDate(e.target.value)}
+                    className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" onClick={() => setCustomStartDate(earliestDate)} className="rounded border border-gray-300 bg-white px-2 py-1 text-xs">Use earliest start</button>
+                <button type="button" onClick={() => setCustomEndDate(latestDate)} className="rounded border border-gray-300 bg-white px-2 py-1 text-xs">Use latest end</button>
+                <button type="button" onClick={resetAllFilters} className="rounded bg-slate-900 px-2 py-1 text-xs text-white">Reset all data filters</button>
+              </div>
+            </div>
           )}
 
           <div className="mt-4 inline-flex rounded-lg border border-gray-200 bg-gray-100 p-1">
@@ -464,26 +568,115 @@ export default function DashboardClient({ initialTab }: Props) {
               <div className="space-y-3">
                 <ReadinessGauge score={appleHealthReadiness} />
                 <MetricConclusion title="Readiness Score" summary={readinessText.summary} trend={readinessText.trend} action={readinessText.action} />
+                <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+                  Readiness Trend is calculated per day from HRV max and previous-night sleep, then aggregated by your selected granularity.
+                </div>
               </div>
             </div>
 
-            <div className="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-700">
-              <p className="font-semibold text-gray-900">Import Summary</p>
-              <p className="mt-1">
-                V1 shows Apple Health only: {importSummary.appleHealthDays} daily rows, {importSummary.workoutSessions} workout sessions, and {importSummary.sportsCaptured} sport types.
-              </p>
-              <p className="mt-1 text-gray-500">
-                CSV source rows remain available in V0 for detailed inspection.
-              </p>
+            <div className="rounded-lg border border-gray-200 bg-white p-4 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="font-semibold text-gray-900">Sleep Drilldown</p>
+                  <p className="text-xs text-gray-500">Sleep stages, sleeping heart-rate range, and low-HR alerts from imported records.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSleepDrilldown((prev) => !prev)}
+                  className="rounded border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700"
+                >
+                  {showSleepDrilldown ? "Hide details" : "Drill down"}
+                </button>
+              </div>
+
+              {totalLowSleepHrAlerts > 0 && (
+                <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+                  Low sleeping heart-rate alerts detected in imported data: {totalLowSleepHrAlerts}. Consider reviewing this with a clinician if this is new for you.
+                </div>
+              )}
+
+              {showSleepDrilldown && (
+                <div className="mt-3 overflow-x-auto rounded border border-gray-200">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-gray-50 text-gray-700">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Date</th>
+                        <th className="px-3 py-2 text-left">REM</th>
+                        <th className="px-3 py-2 text-left">Core</th>
+                        <th className="px-3 py-2 text-left">Deep</th>
+                        <th className="px-3 py-2 text-left">Awake</th>
+                        <th className="px-3 py-2 text-left">Sleep HR (avg/min/max)</th>
+                        <th className="px-3 py-2 text-left">Low HR alerts</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sleepDrilldownRows.map((row) => (
+                        <tr key={String(row._id)} className="border-t border-gray-100">
+                          <td className="px-3 py-2 font-medium">{toDisplayDate(row.date)}</td>
+                          <td className="px-3 py-2">{Math.round(row.sleepDetail?.remMinutes ?? 0)}m</td>
+                          <td className="px-3 py-2">{Math.round(row.sleepDetail?.coreMinutes ?? 0)}m</td>
+                          <td className="px-3 py-2">{Math.round(row.sleepDetail?.deepMinutes ?? 0)}m</td>
+                          <td className="px-3 py-2">{Math.round(row.sleepDetail?.awakeMinutes ?? 0)}m</td>
+                          <td className="px-3 py-2">
+                            {(row.sleepHeartRate?.avg ?? null) !== null
+                              ? `${Math.round(row.sleepHeartRate?.avg ?? 0)} / ${Math.round(row.sleepHeartRate?.min ?? 0)} / ${Math.round(row.sleepHeartRate?.max ?? 0)} bpm`
+                              : "—"}
+                          </td>
+                          <td className="px-3 py-2">{row.sleepHeartRate?.lowAlerts ?? 0}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
+
+            <SourceDataTable entries={appleHealthEntries} hideSourceFilter title="Imported Raw Data (Apple Health)" />
           </section>
         )}
 
         {!loading && !error && tab === "sport" && (
           <section className="space-y-5" data-testid="sport-panel">
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white p-3 text-sm">
+              <span className="font-medium text-gray-700">Sport:</span>
+              <select
+                value={selectedSport}
+                onChange={(e) => setSelectedSport(e.target.value)}
+                className="rounded border border-gray-300 bg-white px-2 py-1"
+              >
+                <option value="all">All</option>
+                {availableSports.map((sport) => (
+                  <option key={sport} value={sport}>{sportLabel(sport)}</option>
+                ))}
+              </select>
+
+              <span className="ml-2 font-medium text-gray-700">View by:</span>
+              {(["day", "week", "month", "year"] as Granularity[]).map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() => setGranularity(g)}
+                  className={`rounded px-2 py-1 ${granularity === g ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700"}`}
+                >
+                  {g}
+                </button>
+              ))}
+              <span className="ml-2 font-medium text-gray-700">Mode:</span>
+              {(["average", "total"] as AggregationMode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={`rounded px-2 py-1 ${mode === m ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700"}`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+
             {sportSections.map((section) => (
               <SportSection
-                key={section.sport}
+                key={section.key}
                 sport={section.sport}
                 sessions={section.sessions}
                 isMock={section.isMock}

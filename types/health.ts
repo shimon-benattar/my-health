@@ -17,6 +17,24 @@ export interface HealthEntryInput {
   restingHeartRate: number | null;
   sleep: number | null; // total minutes
   steps: number | null;
+  sleepDetail?: {
+    remMinutes: number;
+    coreMinutes: number;
+    deepMinutes: number;
+    awakeMinutes: number;
+    asleepMinutes: number;
+    inBedMinutes: number;
+  } | null;
+  sleepHeartRate?: {
+    avg: number | null;
+    min: number | null;
+    max: number | null;
+    lowAlerts: number;
+  } | null;
+  syntheticAdjustments?: {
+    shabbatSleepAddedMinutes: number;
+    shabbatStepsAdded: number;
+  } | null;
 }
 
 export interface ImportedDataPoint {
@@ -54,6 +72,24 @@ export interface HealthEntryDoc {
   restingHeartRate: number | null;
   sleep: number | null;
   steps: number | null;
+  sleepDetail?: {
+    remMinutes: number;
+    coreMinutes: number;
+    deepMinutes: number;
+    awakeMinutes: number;
+    asleepMinutes: number;
+    inBedMinutes: number;
+  } | null;
+  sleepHeartRate?: {
+    avg: number | null;
+    min: number | null;
+    max: number | null;
+    lowAlerts: number;
+  } | null;
+  syntheticAdjustments?: {
+    shabbatSleepAddedMinutes: number;
+    shabbatStepsAdded: number;
+  } | null;
 }
 
 export interface UserProfile {
@@ -123,6 +159,13 @@ export interface DashboardWorkoutDoc {
     confidence: number;
     matchReason: string;
   } | null;
+  kmSplits?: Array<{
+    kmIndex: number;
+    distanceKm: number;
+    paceMinPerKm: number | null;
+    avgHeartRate: number | null;
+    maxHeartRate: number | null;
+  }> | null;
 }
 
 export interface AppleHealthImportCounts {

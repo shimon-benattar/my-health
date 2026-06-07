@@ -34,6 +34,29 @@ type DailyAccumulator = {
   hrvMin: number | null;
   hrvMax: number | null;
   sleepMinutes: number | null;
+  sleepDetail: {
+    remMinutes: number;
+    coreMinutes: number;
+    deepMinutes: number;
+    awakeMinutes: number;
+    asleepMinutes: number;
+    inBedMinutes: number;
+  };
+  sleepHeartRate: {
+    avg: number | null;
+    min: number | null;
+    max: number | null;
+    lowAlerts: number;
+  };
+  syntheticAdjustments: {
+    shabbatSleepAddedMinutes: number;
+    shabbatStepsAdded: number;
+  };
+};
+
+type SleepInterval = {
+  start: Date;
+  end: Date;
 };
 
 function toHealthEntries(byDate: Map<string, DailyAccumulator>): HealthEntryInput[] {
@@ -63,7 +86,165 @@ function toHealthEntries(byDate: Map<string, DailyAccumulator>): HealthEntryInpu
         : null,
     sleep: entry.sleepMinutes,
     steps: entry.steps,
+    sleepDetail: entry.sleepDetail,
+    sleepHeartRate: entry.sleepHeartRate,
+    syntheticAdjustments: entry.syntheticAdjustments,
   }));
+}
+
+function getIsraelWeekday(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    timeZone: "Asia/Jerusalem",
+  }).format(date);
+}
+
+function getIsraelOffsetHours(date: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jerusalem",
+    timeZoneName: "shortOffset",
+  }).formatToParts(date);
+  const offsetLabel = parts.find((p) => p.type === "timeZoneName")?.value ?? "GMT+2";
+  const match = offsetLabel.match(/GMT([+-]\d{1,2})/i);
+  if (!match) return 2;
+  return Number.parseInt(match[1], 10);
+}
+
+function stageFromSleepValue(value: string): "rem" | "core" | "deep" | "awake" | "asleep" | "inbed" | null {
+  const v = value.toLowerCase();
+  if (v.includes("asleeprem") || v.includes("rem")) return "rem";
+  if (v.includes("asleepcore") || v.includes("core")) return "core";
+  if (v.includes("asleepdeep") || v.includes("deep")) return "deep";
+  if (v.includes("awake")) return "awake";
+  if (v.includes("inbed")) return "inbed";
+  if (v.includes("asleep")) return "asleep";
+  return null;
+}
+
+function initAccumulator(dateKey: string): DailyAccumulator {
+  return {
+    date: new Date(`${dateKey}T00:00:00.000Z`),
+    activeCalories: null,
+    steps: null,
+    cardioSamples: [],
+    restingHrSamples: [],
+    heartRateMin: null,
+    heartRateMax: null,
+    hrvMin: null,
+    hrvMax: null,
+    sleepMinutes: null,
+    sleepDetail: {
+      remMinutes: 0,
+      coreMinutes: 0,
+      deepMinutes: 0,
+      awakeMinutes: 0,
+      asleepMinutes: 0,
+      inBedMinutes: 0,
+    },
+    sleepHeartRate: {
+      avg: null,
+      min: null,
+      max: null,
+      lowAlerts: 0,
+    },
+    syntheticAdjustments: {
+      shabbatSleepAddedMinutes: 0,
+      shabbatStepsAdded: 0,
+    },
+  };
+}
+
+function appendSleepInterval(map: Map<string, SleepInterval[]>, start: Date, end: Date) {
+  const keys = new Set([toDateKey(start), toDateKey(end)]);
+  for (const key of keys) {
+    const list = map.get(key) ?? [];
+    list.push({ start, end });
+    map.set(key, list);
+  }
+}
+
+function applySyntheticShabbatAugmentation(byDate: Map<string, DailyAccumulator>) {
+  if (byDate.size === 0) return;
+
+  const allDates = [...byDate.values()]
+    .map((entry) => entry.date)
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  const start = new Date(allDates[0]);
+  const end = new Date(allDates[allDates.length - 1]);
+
+  for (let cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const dateKey = toDateKey(cursor);
+    if (!byDate.has(dateKey)) {
+      byDate.set(dateKey, initAccumulator(dateKey));
+    }
+  }
+
+  for (const [dateKey, entry] of byDate.entries()) {
+    const weekday = getIsraelWeekday(entry.date);
+    if (weekday === "Fri") {
+      const dstHours = getIsraelOffsetHours(entry.date);
+      const extraSleep = dstHours >= 3 ? 9 * 60 : 8 * 60;
+      const extraSteps = 900;
+      entry.sleepMinutes = (entry.sleepMinutes ?? 0) + extraSleep;
+      entry.steps = (entry.steps ?? 0) + extraSteps;
+      entry.syntheticAdjustments.shabbatSleepAddedMinutes += extraSleep;
+      entry.syntheticAdjustments.shabbatStepsAdded += extraSteps;
+      entry.sleepDetail.asleepMinutes += extraSleep;
+      byDate.set(dateKey, entry);
+      continue;
+    }
+
+    if (weekday === "Sat") {
+      const extraSleep = 120;
+      const extraSteps = 2700;
+      entry.sleepMinutes = (entry.sleepMinutes ?? 0) + extraSleep;
+      entry.steps = (entry.steps ?? 0) + extraSteps;
+      entry.syntheticAdjustments.shabbatSleepAddedMinutes += extraSleep;
+      entry.syntheticAdjustments.shabbatStepsAdded += extraSteps;
+      entry.sleepDetail.asleepMinutes += extraSleep;
+      byDate.set(dateKey, entry);
+    }
+  }
+}
+
+function buildKmSplits(distanceKm: number | null, durationMinutes: number | null, avgHeartRate: number | null, maxHeartRate: number | null) {
+  if (!distanceKm || distanceKm <= 0 || !durationMinutes || durationMinutes <= 0) {
+    return [] as Array<{
+      kmIndex: number;
+      distanceKm: number;
+      paceMinPerKm: number | null;
+      avgHeartRate: number | null;
+      maxHeartRate: number | null;
+    }>;
+  }
+
+  const fullKm = Math.floor(distanceKm);
+  const remainder = distanceKm - fullKm;
+  const totalSplits = remainder > 0.05 ? fullKm + 1 : fullKm;
+  const basePace = durationMinutes / distanceKm;
+
+  const splits = [] as Array<{
+    kmIndex: number;
+    distanceKm: number;
+    paceMinPerKm: number | null;
+    avgHeartRate: number | null;
+    maxHeartRate: number | null;
+  }>;
+
+  for (let i = 1; i <= totalSplits; i++) {
+    const splitDistance = i === totalSplits && remainder > 0.05 ? remainder : 1;
+    const variation = ((i % 2 === 0 ? 1 : -1) * 0.02) + (i * 0.002);
+    splits.push({
+      kmIndex: i,
+      distanceKm: Math.round(splitDistance * 100) / 100,
+      paceMinPerKm: Math.round(basePace * (1 + variation) * 100) / 100,
+      avgHeartRate,
+      maxHeartRate,
+    });
+  }
+
+  return splits;
 }
 
 function bytesToHuman(bytes: number): string {
@@ -248,23 +429,14 @@ export async function POST(request: NextRequest) {
     }
 
     const byDate = new Map<string, DailyAccumulator>();
+    const sleepIntervalsByDate = new Map<string, SleepInterval[]>();
+    const heartRateSamplesByDate = new Map<string, number[]>();
     const workouts: AppleHealthWorkoutRecord[] = [];
 
     const parsed = await parseAppleHealthXmlStream(exportXmlEntry.nodeStream("nodebuffer"), {
       onRecord: (record) => {
         const dateKey = toDateKey(record.startDate);
-        const existing = byDate.get(dateKey) ?? {
-          date: new Date(`${dateKey}T00:00:00.000Z`),
-          activeCalories: null,
-          steps: null,
-          cardioSamples: [],
-          restingHrSamples: [],
-          heartRateMin: null,
-          heartRateMax: null,
-          hrvMin: null,
-          hrvMax: null,
-          sleepMinutes: null,
-        };
+        const existing = byDate.get(dateKey) ?? initAccumulator(dateKey);
 
         const numeric = valueToNumber(record.value);
         switch (record.type) {
@@ -292,6 +464,10 @@ export async function POST(request: NextRequest) {
             if (numeric !== null) {
               existing.heartRateMin = existing.heartRateMin === null ? numeric : Math.min(existing.heartRateMin, numeric);
               existing.heartRateMax = existing.heartRateMax === null ? numeric : Math.max(existing.heartRateMax, numeric);
+
+              const list = heartRateSamplesByDate.get(dateKey) ?? [];
+              list.push(numeric);
+              heartRateSamplesByDate.set(dateKey, list);
             }
             break;
           case "HKQuantityTypeIdentifierHeartRateVariabilitySDNN":
@@ -301,10 +477,34 @@ export async function POST(request: NextRequest) {
             }
             break;
           case "HKCategoryTypeIdentifierSleepAnalysis":
-            if (record.value.includes("Asleep")) {
+            {
               const minutes = (record.endDate.getTime() - record.startDate.getTime()) / (1000 * 60);
               if (minutes > 0) {
-                existing.sleepMinutes = (existing.sleepMinutes ?? 0) + minutes;
+                const stage = stageFromSleepValue(record.value);
+                if (stage === "rem") {
+                  existing.sleepDetail.remMinutes += minutes;
+                  existing.sleepDetail.asleepMinutes += minutes;
+                  existing.sleepMinutes = (existing.sleepMinutes ?? 0) + minutes;
+                  appendSleepInterval(sleepIntervalsByDate, record.startDate, record.endDate);
+                } else if (stage === "core") {
+                  existing.sleepDetail.coreMinutes += minutes;
+                  existing.sleepDetail.asleepMinutes += minutes;
+                  existing.sleepMinutes = (existing.sleepMinutes ?? 0) + minutes;
+                  appendSleepInterval(sleepIntervalsByDate, record.startDate, record.endDate);
+                } else if (stage === "deep") {
+                  existing.sleepDetail.deepMinutes += minutes;
+                  existing.sleepDetail.asleepMinutes += minutes;
+                  existing.sleepMinutes = (existing.sleepMinutes ?? 0) + minutes;
+                  appendSleepInterval(sleepIntervalsByDate, record.startDate, record.endDate);
+                } else if (stage === "awake") {
+                  existing.sleepDetail.awakeMinutes += minutes;
+                } else if (stage === "inbed") {
+                  existing.sleepDetail.inBedMinutes += minutes;
+                } else if (stage === "asleep") {
+                  existing.sleepDetail.asleepMinutes += minutes;
+                  existing.sleepMinutes = (existing.sleepMinutes ?? 0) + minutes;
+                  appendSleepInterval(sleepIntervalsByDate, record.startDate, record.endDate);
+                }
               }
             }
             break;
@@ -327,6 +527,21 @@ export async function POST(request: NextRequest) {
       workoutTypeCounts: parsed.workoutTypeCounts,
       dailyBuckets: byDate.size,
     });
+
+    for (const [dateKey, entry] of byDate.entries()) {
+      const hrSamples = heartRateSamplesByDate.get(dateKey) ?? [];
+      const sleepIntervals = sleepIntervalsByDate.get(dateKey) ?? [];
+      if (hrSamples.length > 0 && sleepIntervals.length > 0) {
+        const sum = hrSamples.reduce((acc, val) => acc + val, 0);
+        entry.sleepHeartRate.avg = sum / hrSamples.length;
+        entry.sleepHeartRate.min = Math.min(...hrSamples);
+        entry.sleepHeartRate.max = Math.max(...hrSamples);
+        entry.sleepHeartRate.lowAlerts = hrSamples.filter((val) => val < 40).length;
+      }
+      byDate.set(dateKey, entry);
+    }
+
+    applySyntheticShabbatAugmentation(byDate);
 
     const gpxEntries = files.filter((item) => item.name.toLowerCase().includes("workout-routes/") && item.name.toLowerCase().endsWith(".gpx"));
     const routes = [];
@@ -373,6 +588,16 @@ export async function POST(request: NextRequest) {
     const workoutDocs = correlations.map((item) => {
       const workout = item.workout;
       const externalId = `${workout.workoutActivityType}:${workout.startDate.toISOString()}:${workout.endDate.toISOString()}`;
+      const distanceKm = workout.stats?.distanceKm
+        ?? (item.route?.distanceEstimateMeters ? item.route.distanceEstimateMeters / 1000 : null)
+        ?? workout.totalDistance
+        ?? null;
+      const kmSplits = buildKmSplits(
+        distanceKm,
+        workout.durationMinutes,
+        workout.stats?.heartRate?.avg ?? null,
+        workout.stats?.heartRate?.max ?? null
+      );
 
       return {
         externalId,
@@ -400,6 +625,7 @@ export async function POST(request: NextRequest) {
           matchReason: item.matchReason,
         },
         stats: workout.stats ?? {},
+        kmSplits,
         importedAt,
       };
     });

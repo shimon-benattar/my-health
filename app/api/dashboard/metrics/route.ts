@@ -17,16 +17,30 @@ interface SportAggregate {
   peakHeartRateMax: number | null;
 }
 
-function normalizeWorkoutType(raw: string | null | undefined): string | null {
+function normalizeSportKey(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const value = raw.trim().toLowerCase();
-  if (!value) return null;
-  if (value.includes("running")) return "running";
-  if (value.includes("padel")) return "padel";
-  if (value.includes("racketball")) return "racketball";
-  if (value.includes("walk")) return "walking";
-  if (value.includes("cycle") || value.includes("bike")) return "cycling";
-  return value;
+
+  const compact = raw
+    .trim()
+    .replace(/^HKWorkoutActivityType/i, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase();
+
+  if (!compact) return null;
+  if (compact.includes("run")) return "running";
+  if (compact.includes("padel")) return "padel";
+  if (compact.includes("racketball") || compact.includes("racquetball")) return "racketball";
+  if (compact.includes("walk")) return "walking";
+  if (compact.includes("cycle") || compact.includes("bike")) return "cycling";
+  if (compact.includes("snowboard")) return "snowboarding";
+  if (compact.includes("weight") || compact.includes("strength")) return "weightlifting";
+
+  return compact.replace(/\s+/g, " ").trim();
+}
+
+function normalizeWorkoutType(raw: string | null | undefined): string | null {
+  return normalizeSportKey(raw);
 }
 
 function getStartDate(range: RangeParam): Date | null {
@@ -50,6 +64,20 @@ function parseRange(raw: string | null): RangeParam {
   return "30d";
 }
 
+function parseDateParam(raw: string | null, endOfDay = false): Date | null {
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  if (endOfDay) {
+    parsed.setHours(23, 59, 59, 999);
+  } else {
+    parsed.setHours(0, 0, 0, 0);
+  }
+
+  return parsed;
+}
+
 function toDateSafe(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
@@ -71,13 +99,20 @@ export async function GET(request: NextRequest) {
     const params = request.nextUrl.searchParams;
     const range = parseRange(params.get("range"));
     const sportType = params.get("sportType")?.trim() || null;
-    const startDate = getStartDate(range);
+    const rangeStartDate = getStartDate(range);
+    const customStartDate = parseDateParam(params.get("startDate"), false);
+    const customEndDate = parseDateParam(params.get("endDate"), true);
+    const startDate = customStartDate ?? rangeStartDate;
+    const endDate = customEndDate;
 
     await connectDB();
 
     const filter: Record<string, unknown> = {};
     if (startDate) {
-      filter.date = { $gte: startDate };
+      filter.date = { ...(filter.date as Record<string, unknown> ?? {}), $gte: startDate };
+    }
+    if (endDate) {
+      filter.date = { ...(filter.date as Record<string, unknown> ?? {}), $lte: endDate };
     }
     if (sportType) {
       filter.sportType = sportType;
@@ -87,7 +122,10 @@ export async function GET(request: NextRequest) {
 
     const workoutFilter: Record<string, unknown> = {};
     if (startDate) {
-      workoutFilter.startDate = { $gte: startDate };
+      workoutFilter.startDate = { ...(workoutFilter.startDate as Record<string, unknown> ?? {}), $gte: startDate };
+    }
+    if (endDate) {
+      workoutFilter.startDate = { ...(workoutFilter.startDate as Record<string, unknown> ?? {}), $lte: endDate };
     }
     if (sportType) {
       workoutFilter.workoutType = { $regex: sportType, $options: "i" };
@@ -112,6 +150,13 @@ export async function GET(request: NextRequest) {
         lastTimestamp: Date | null;
       } | null;
       routeCorrelation?: { matched: boolean; confidence: number; matchReason: string };
+      kmSplits?: Array<{
+        kmIndex: number;
+        distanceKm: number;
+        paceMinPerKm: number | null;
+        avgHeartRate: number | null;
+        maxHeartRate: number | null;
+      }>;
     }>;
 
     const workouts = rawWorkouts.map((workout) => ({
@@ -126,6 +171,7 @@ export async function GET(request: NextRequest) {
       stats: workout.stats ?? null,
       routeSummary: workout.routeSummary ?? null,
       routeCorrelation: workout.routeCorrelation,
+      kmSplits: workout.kmSplits ?? null,
     }));
 
     const sportSummary = workouts.reduce<Record<string, SportAggregate>>((acc, workout) => {
