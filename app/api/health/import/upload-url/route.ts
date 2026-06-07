@@ -48,6 +48,7 @@ export async function POST(request: Request): Promise<Response> {
             "application/octet-stream",
           ],
           maximumSizeInBytes: 5 * 1024 * 1024 * 1024, // 5 GB
+          addRandomSuffix: true,
           tokenPayload: JSON.stringify({ uploadedAt: new Date().toISOString() }),
         };
       },
