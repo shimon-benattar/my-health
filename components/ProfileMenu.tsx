@@ -15,6 +15,12 @@ interface ProfileFormState {
   notes: string;
 }
 
+interface ApiErrorShape {
+  error?: string;
+  code?: string;
+  requestId?: string;
+}
+
 const DEFAULT_FORM: ProfileFormState = {
   name: "",
   imageUrl: "",
@@ -44,6 +50,12 @@ function toForm(profile: UserProfile): ProfileFormState {
     timezone: profile.timezone ?? "Asia/Jerusalem",
     notes: profile.notes ?? "",
   };
+}
+
+function describeApiError(status: number, body: ApiErrorShape): string {
+  const base = body.error?.trim() || `Request failed (HTTP ${status})`;
+  const suffix = body.requestId ? ` [ref: ${body.requestId}]` : "";
+  return `${base}${suffix}`;
 }
 
 export default function ProfileMenu() {
@@ -83,10 +95,11 @@ export default function ProfileMenu() {
       setSuccess("");
       try {
         const res = await fetch("/api/profile", { cache: "no-store" });
+        const body = (await res.json().catch(() => ({}))) as ApiErrorShape & UserProfile;
         if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
+          throw new Error(describeApiError(res.status, body));
         }
-        const profile = (await res.json()) as UserProfile;
+        const profile = body as UserProfile;
         if (active) {
           setForm(toForm(profile));
         }
@@ -140,9 +153,9 @@ export default function ProfileMenu() {
         body: JSON.stringify(payload),
       });
 
-      const body = (await res.json().catch(() => ({}))) as { error?: string } & UserProfile;
+      const body = (await res.json().catch(() => ({}))) as ApiErrorShape & UserProfile;
       if (!res.ok) {
-        throw new Error(body.error ?? `HTTP ${res.status}`);
+        throw new Error(describeApiError(res.status, body));
       }
 
       setForm(toForm(body));

@@ -18,8 +18,8 @@ describe("Landing page", () => {
   it("renders an Import Health Data link pointing to /dashboard", () => {
     render(<Home />);
     const link = screen.getByTestId("import-data-link");
-    expect(link).toHaveAttribute("href", "/dashboard");
-    expect(link).toHaveTextContent(/import health data/i);
+    expect(link).toHaveAttribute("href", "#import-data");
+    expect(link).toHaveTextContent(/import zip data/i);
   });
 
   it("renders the UploadForm on the landing page", () => {

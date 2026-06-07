@@ -30,17 +30,16 @@ beforeEach(() => {
 // Rendering
 // ---------------------------------------------------------------------------
 describe("UploadForm rendering", () => {
-  it("renders the Browse button, file name placeholder, and Upload ZIP button", () => {
+  it("renders the choose button, file placeholder, and Start Import button", () => {
     render(<UploadForm />);
-    expect(screen.getByRole("button", { name: /upload zip/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /start import/i })).toBeInTheDocument();
     expect(screen.getByText(/no file chosen/i)).toBeInTheDocument();
-    expect(screen.getByText(/browse/i)).toBeInTheDocument();
-    expect(screen.getByTestId("weight-input")).toBeInTheDocument();
+    expect(screen.getByText(/choose zip/i)).toBeInTheDocument();
   });
 
-  it("Upload ZIP button is disabled when no file is selected", () => {
+  it("Start Import button is disabled when no file is selected", () => {
     render(<UploadForm />);
-    expect(screen.getByRole("button", { name: /upload zip/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /start import/i })).toBeDisabled();
   });
 });
 
@@ -61,7 +60,7 @@ describe("UploadForm file selection", () => {
     const input = screen.getByTestId("file-input");
     const file = new File(["zip-bytes"], "export.zip", { type: "application/zip" });
     await userEvent.upload(input, file);
-    expect(screen.getByRole("button", { name: /upload zip/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /start import/i })).toBeEnabled();
   });
 });
 
@@ -75,7 +74,7 @@ describe("UploadForm successful upload", () => {
 
     const input = screen.getByTestId("file-input");
     await userEvent.upload(input, new File(["data"], "health.zip", { type: "application/zip" }));
-    await userEvent.click(screen.getByRole("button", { name: /upload zip/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start import/i }));
 
     await waitFor(() => {
       expect(screen.getByRole("status")).toBeInTheDocument();
@@ -91,7 +90,7 @@ describe("UploadForm successful upload", () => {
 
     const input = screen.getByTestId("file-input");
     await userEvent.upload(input, new File(["data"], "health.zip", { type: "application/zip" }));
-    await userEvent.click(screen.getByRole("button", { name: /upload zip/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start import/i }));
 
     await waitFor(() => screen.getByRole("status"));
     expect(screen.getByTestId("file-name")).toHaveTextContent("No file chosen");
@@ -103,7 +102,7 @@ describe("UploadForm successful upload", () => {
 
     const input = screen.getByTestId("file-input");
     await userEvent.upload(input, new File(["data"], "health.zip", { type: "application/zip" }));
-    await userEvent.click(screen.getByRole("button", { name: /upload zip/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start import/i }));
 
     await waitFor(() => screen.getByRole("status"));
     expect(global.fetch).toHaveBeenCalledWith(
@@ -144,7 +143,7 @@ describe("UploadForm successful upload", () => {
     render(<UploadForm />);
     const input = screen.getByTestId("file-input");
     await userEvent.upload(input, new File(["data"], "apple.zip", { type: "application/zip" }));
-    await userEvent.click(screen.getByRole("button", { name: /upload zip/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start import/i }));
 
     await waitFor(() => {
       expect(screen.getByRole("status")).toBeInTheDocument();
@@ -219,7 +218,7 @@ describe("UploadForm successful upload", () => {
     });
 
     await userEvent.upload(input, largeFile);
-    await userEvent.click(screen.getByRole("button", { name: /upload zip/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start import/i }));
 
     await waitFor(() => {
       expect(screen.getByRole("status")).toBeInTheDocument();
@@ -261,11 +260,9 @@ describe("UploadForm successful upload", () => {
     const fetchCall = vi.mocked(global.fetch).mock.calls[2];
     const body = JSON.parse((fetchCall[1] as RequestInit).body as string) as {
       blobUrl?: string;
-      weightKg?: string;
     };
 
     expect(body.blobUrl).toBe("https://example.public.blob.vercel-storage.com/upload.zip");
-    expect(body.weightKg).toBe("85");
   });
 
   it("shows token preflight error details for large file uploads", async () => {
@@ -292,7 +289,7 @@ describe("UploadForm successful upload", () => {
     });
 
     await userEvent.upload(input, largeFile);
-    await userEvent.click(screen.getByRole("button", { name: /upload zip/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start import/i }));
 
     await waitFor(() => screen.getByRole("alert"));
     expect(screen.getByTestId("error-message")).toHaveTextContent("Blob token preflight failed");
@@ -311,7 +308,7 @@ describe("UploadForm error handling", () => {
 
     const input = screen.getByTestId("file-input");
     await userEvent.upload(input, new File(["bad"], "bad.zip", { type: "application/zip" }));
-    await userEvent.click(screen.getByRole("button", { name: /upload zip/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start import/i }));
 
     await waitFor(() => screen.getByRole("alert"));
     expect(screen.getByTestId("error-message")).toHaveTextContent(
@@ -325,7 +322,7 @@ describe("UploadForm error handling", () => {
 
     const input = screen.getByTestId("file-input");
     await userEvent.upload(input, new File(["data"], "health.zip", { type: "application/zip" }));
-    await userEvent.click(screen.getByRole("button", { name: /upload zip/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start import/i }));
 
     await waitFor(() => screen.getByRole("alert"));
     expect(screen.getByTestId("error-message")).toHaveTextContent("Network failure");

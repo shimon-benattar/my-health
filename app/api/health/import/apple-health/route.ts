@@ -15,6 +15,9 @@ import type { HealthEntryInput, AppleHealthImportResult } from "@/types/health";
 const ARCHIVE_TTL_DAYS = 30;
 
 async function waitMs(ms: number) {
+  if (process.env.NODE_ENV === "test") {
+    return;
+  }
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -363,32 +366,54 @@ export async function POST(request: NextRequest) {
       const accessAttempts: Array<"private" | "public"> =
         blobAccessMode === "private" ? ["private", "public"] : ["public", "private"];
 
-      let blobRes: Awaited<ReturnType<typeof getBlob>> | null = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        for (const access of accessAttempts) {
-          blobRes = await getBlob(body.blobUrl, {
-            access,
-            token: readWriteToken,
-          });
+      const blobCandidates: string[] = [body.blobUrl];
+      try {
+        const parsed = new URL(body.blobUrl);
+        const pathname = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+        if (pathname.length > 0 && !blobCandidates.includes(pathname)) {
+          blobCandidates.push(pathname);
+        }
+      } catch {
+        // Keep only the original candidate when URL parsing fails.
+      }
 
-          if (blobRes?.statusCode === 200 && blobRes.stream) {
-            addLog("info", "Fetched blob for import", { access, attempt: attempt + 1 });
-            break;
+      let blobRes: Awaited<ReturnType<typeof getBlob>> | null = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        for (const access of accessAttempts) {
+          for (const candidate of blobCandidates) {
+            blobRes = await getBlob(candidate, {
+              access,
+              token: readWriteToken,
+            });
+
+            if (blobRes?.statusCode === 200 && blobRes.stream) {
+              addLog("info", "Fetched blob for import", {
+                access,
+                attempt: attempt + 1,
+                candidate: candidate === body.blobUrl ? "url" : "pathname",
+              });
+              break;
+            }
+
+            addLog("warn", "Blob fetch attempt failed", {
+              access,
+              attempt: attempt + 1,
+              candidate: candidate === body.blobUrl ? "url" : "pathname",
+              statusCode: blobRes?.statusCode ?? null,
+            });
           }
 
-          addLog("warn", "Blob fetch attempt failed", {
-            access,
-            attempt: attempt + 1,
-            statusCode: blobRes?.statusCode ?? null,
-          });
+          if (blobRes?.statusCode === 200 && blobRes.stream) {
+            break;
+          }
         }
 
         if (blobRes?.statusCode === 200 && blobRes.stream) {
           break;
         }
 
-        if (attempt < 2) {
-          await waitMs(500 * (attempt + 1));
+        if (attempt < 5) {
+          await waitMs(350 * (attempt + 1));
         }
       }
 
