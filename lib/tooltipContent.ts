@@ -30,6 +30,11 @@ export const TOOLTIP_CONTENT: Record<string, TooltipContent> = {
     trendMeaning: "Rising trends indicate higher daily movement; drops may indicate lower baseline activity.",
     actionableRecommendations: "Treat steps as a standalone health metric and aim for stable weekly totals.",
   },
+  activeCalories: {
+    why: "Active Calories estimate movement-related energy burn above resting metabolism.",
+    trendMeaning: "Rising trends usually reflect higher training or movement load; abrupt drops can indicate lower activity or reduced intensity.",
+    actionableRecommendations: "Use this with sleep and readiness to balance load and recovery, especially across hard training weeks.",
+  },
   runningPeak: {
     why: "Running peak heart rate indicates upper aerobic and threshold stress.",
     trendMeaning: "Rising peaks with stable recovery can reflect fitness gains; frequent very high peaks may indicate overreaching.",

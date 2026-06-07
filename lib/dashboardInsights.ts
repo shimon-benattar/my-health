@@ -285,3 +285,33 @@ export function stepsInsight(entries: HealthEntryDoc[], range = "all"): InsightB
     action: "Use steps as a baseline consistency check. Aim for a steady weekly total rather than spiky high-low patterns.",
   };
 }
+
+export function activeCaloriesInsight(entries: HealthEntryDoc[], range = "all"): InsightBlock {
+  const sorted = [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const values = sorted.map((e) => e.activeCalories).filter((v): v is number => v !== null);
+  const average = avg(values);
+  const direction = trendDirection(values);
+  const suffix = rangeSuffix(range);
+
+  const summary =
+    values.length === 0
+      ? "No active calorie data in the selected window."
+      : average >= 700
+        ? `Average ${Math.round(average)} active kcal/day — high activity load ${suffix}.`
+        : average >= 400
+          ? `Average ${Math.round(average)} active kcal/day — moderate daily load ${suffix}.`
+          : `Average ${Math.round(average)} active kcal/day — relatively light activity ${suffix}.`;
+
+  const trendText =
+    direction === "up"
+      ? `Active calorie load is trending upward ${suffix}.`
+      : direction === "down"
+        ? `Active calorie load is trending downward ${suffix}.`
+        : `Active calorie load is stable ${suffix}.`;
+
+  return {
+    summary,
+    trend: trendText,
+    action: "If load rises for multiple weeks, pair it with stronger sleep and recovery habits to avoid carrying fatigue forward.",
+  };
+}

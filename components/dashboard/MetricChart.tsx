@@ -44,12 +44,17 @@ function formatTooltipValue(value: TooltipValue, unit: string): string {
 function formatAxisLabel(label: string): string {
   if (/^\d{4}-W\d{2}$/.test(label)) {
     const [year, week] = label.split("-W");
-    return `W${Number(week)}-${year}`;
+    return `W${Number(week)} '${year.slice(2)}`;
+  }
+
+  if (/^\d{4}-\d{2}$/.test(label)) {
+    const [year, month] = label.split("-");
+    return `${month}/${year.slice(2)}`;
   }
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(label)) {
-    const [year, month, day] = label.split("-");
-    return `${day}-${month}-${year}`;
+    const [, month, day] = label.split("-");
+    return `${day}/${month}`;
   }
 
   return label;
@@ -57,6 +62,8 @@ function formatAxisLabel(label: string): string {
 
 export default function MetricChart({ title, tooltipKey, data, unit = "", variant = "line" }: Props) {
   const cleaned = data.filter((d) => d.value !== null) as Array<{ label: string; value: number }>;
+  const xTickFontSize = cleaned.length > 40 ? 12 : 13;
+  const xTickAngle = cleaned.length > 60 ? -28 : 0;
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm" data-testid="metric-chart">
@@ -78,16 +85,32 @@ export default function MetricChart({ title, tooltipKey, data, unit = "", varian
             {variant === "bar" ? (
               <BarChart data={cleaned}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} tickFormatter={formatAxisLabel} interval={0} minTickGap={16} />
-                <YAxis tick={{ fontSize: 11 }} />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: xTickFontSize }}
+                  tickFormatter={formatAxisLabel}
+                  interval="preserveStartEnd"
+                  minTickGap={24}
+                  angle={xTickAngle}
+                  height={xTickAngle !== 0 ? 56 : 30}
+                />
+                <YAxis tick={{ fontSize: 12 }} width={42} />
                 <Tooltip formatter={(value) => formatTooltipValue(value as TooltipValue, unit)} />
                 <Bar dataKey="value" fill="#2563eb" radius={[6, 6, 0, 0]} />
               </BarChart>
             ) : (
               <LineChart data={cleaned}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} tickFormatter={formatAxisLabel} interval={0} minTickGap={16} />
-                <YAxis tick={{ fontSize: 11 }} />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: xTickFontSize }}
+                  tickFormatter={formatAxisLabel}
+                  interval="preserveStartEnd"
+                  minTickGap={24}
+                  angle={xTickAngle}
+                  height={xTickAngle !== 0 ? 56 : 30}
+                />
+                <YAxis tick={{ fontSize: 12 }} width={42} />
                 <Tooltip formatter={(value) => formatTooltipValue(value as TooltipValue, unit)} />
                 <Line type="monotone" dataKey="value" stroke="#1d4ed8" strokeWidth={2} dot={false} />
               </LineChart>

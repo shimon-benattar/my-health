@@ -10,7 +10,7 @@ import SportSection from "@/components/dashboard/SportSection";
 import { getMockSportData, type SportSession } from "@/lib/mockData";
 import { calcReadinessFromInput } from "@/lib/readiness";
 import { aggregateSeries, type AggregationMode, type Granularity } from "@/lib/timeAggregation";
-import { hrvInsight, readinessInsight, rhrInsight, sleepInsight, stepsInsight, vo2Insight } from "@/lib/dashboardInsights";
+import { activeCaloriesInsight, hrvInsight, readinessInsight, rhrInsight, sleepInsight, stepsInsight, vo2Insight } from "@/lib/dashboardInsights";
 import type { DashboardMetricsResponse, DashboardWorkoutDoc, HealthEntryDoc } from "@/types/health";
 
 type Tab = "overview" | "sport";
@@ -68,6 +68,27 @@ function isAppleHealthEntry(entry: HealthEntryDoc): boolean {
   return (entry.sourceType ?? "csv") === "apple-health";
 }
 
+function isSyntheticGapEntry(entry: HealthEntryDoc): boolean {
+  return (entry.sourceFile ?? "").toLowerCase() === "synthetic-shabbat-augmentation";
+}
+
+function sleepQualityLabel(entry: HealthEntryDoc): string {
+  const totalSleep = entry.sleep ?? 0;
+  const deep = entry.sleepDetail?.deepMinutes ?? 0;
+  const rem = entry.sleepDetail?.remMinutes ?? 0;
+  const awake = entry.sleepDetail?.awakeMinutes ?? 0;
+
+  if (totalSleep <= 0) return "No sleep sample";
+  const deepRatio = deep / totalSleep;
+  const remRatio = rem / totalSleep;
+  const awakeRatio = awake / totalSleep;
+
+  if (totalSleep >= 450 && deepRatio >= 0.18 && remRatio >= 0.18 && awakeRatio <= 0.12) return "Strong restorative sleep";
+  if (totalSleep >= 390 && deepRatio >= 0.14 && remRatio >= 0.15 && awakeRatio <= 0.16) return "Balanced sleep";
+  if (totalSleep >= 330) return "Moderate sleep quality";
+  return "Short or fragmented sleep";
+}
+
 function buildReadinessTrend(entries: HealthEntryDoc[]): number[] {
   const sortedAsc = [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
@@ -113,6 +134,18 @@ function mapSessions(entries: HealthEntryDoc[], sport: string): SportSession[] {
 }
 
 function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntryDoc[]) {
+  function sanitizeDistanceKm(value: number | null | undefined): number | null {
+    if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) return null;
+    if (value > 80) return null;
+    return value;
+  }
+
+  function sanitizePace(value: number | undefined): number | undefined {
+    if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
+    if (value < 2 || value > 20) return undefined;
+    return value;
+  }
+
   const dailyByDate = new Map<string, HealthEntryDoc>();
   for (const entry of entries) {
     dailyByDate.set(toLabel(entry.date), entry);
@@ -127,21 +160,25 @@ function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntr
     const daily = dailyByDate.get(dateKey);
     const s = workout.stats;
 
-    const distanceKmXml = s?.distanceKm ?? null;
-    const distanceMetersGpx = workout.routeSummary?.distanceEstimateMeters ?? null;
-    const distanceKmFinal = distanceKmXml
-      ?? (distanceMetersGpx !== null ? distanceMetersGpx / 1000 : null)
-      ?? (workout.totalDistance ?? null);
+    const distanceKmXml = sanitizeDistanceKm(s?.distanceKm ?? null);
+    const distanceKmGpx = sanitizeDistanceKm(
+      workout.routeSummary?.distanceEstimateMeters !== null && workout.routeSummary?.distanceEstimateMeters !== undefined
+        ? workout.routeSummary.distanceEstimateMeters / 1000
+        : null
+    );
+    const distanceKmTotal = sanitizeDistanceKm(workout.totalDistance ?? null);
+    const distanceKmFinal = distanceKmXml ?? distanceKmGpx ?? distanceKmTotal;
 
     const distanceMeters = distanceKmFinal !== null ? distanceKmFinal * 1000 : undefined;
     const durationMinutes = workout.durationMinutes ?? undefined;
 
     const avgSpeedKmh = s?.runningSpeedKmh?.avg ?? null;
-    const paceMinPerKm = avgSpeedKmh && avgSpeedKmh > 0
+    const paceFromSpeed = avgSpeedKmh && avgSpeedKmh > 0
       ? 60 / avgSpeedKmh
       : (distanceKmFinal && distanceKmFinal > 0 && durationMinutes)
         ? durationMinutes / distanceKmFinal
         : undefined;
+    const paceMinPerKm = sanitizePace(paceFromSpeed);
 
     const calories = s?.activeCalories
       ?? workout.totalEnergyBurned
@@ -203,13 +240,6 @@ export default function DashboardClient({ initialTab }: Props) {
       setLoading(true);
       setError("");
       try {
-        await fetch("/api/health/augment/shabbat", {
-          method: "POST",
-          cache: "no-store",
-        }).catch(() => {
-          // Non-blocking: dashboard can still load without one-time augmentation.
-        });
-
         const params = new URLSearchParams({ range });
         if (customStartDate) params.set("startDate", customStartDate);
         if (customEndDate) params.set("endDate", customEndDate);
@@ -240,18 +270,22 @@ export default function DashboardClient({ initialTab }: Props) {
   }, [range, customStartDate, customEndDate]);
 
   const appleHealthEntries = useMemo(() => metrics.entries.filter(isAppleHealthEntry), [metrics.entries]);
+  const chartEntries = useMemo(
+    () => appleHealthEntries.filter((entry) => !isSyntheticGapEntry(entry)),
+    [appleHealthEntries]
+  );
 
   const earliestDate = useMemo(() => {
-    if (appleHealthEntries.length === 0) return "";
-    const sorted = [...appleHealthEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    if (chartEntries.length === 0) return "";
+    const sorted = [...chartEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     return toInputDate(sorted[0].date);
-  }, [appleHealthEntries]);
+  }, [chartEntries]);
 
   const latestDate = useMemo(() => {
-    if (appleHealthEntries.length === 0) return "";
-    const sorted = [...appleHealthEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    if (chartEntries.length === 0) return "";
+    const sorted = [...chartEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     return toInputDate(sorted[sorted.length - 1].date);
-  }, [appleHealthEntries]);
+  }, [chartEntries]);
 
   useEffect(() => {
     if (!customStartDate && earliestDate) {
@@ -262,7 +296,7 @@ export default function DashboardClient({ initialTab }: Props) {
     }
   }, [earliestDate, latestDate, customStartDate, customEndDate]);
 
-  const workoutSessionsMap = useMemo(() => mapWorkoutSessions(metrics.workouts ?? [], appleHealthEntries), [metrics.workouts, appleHealthEntries]);
+  const workoutSessionsMap = useMemo(() => mapWorkoutSessions(metrics.workouts ?? [], chartEntries), [metrics.workouts, chartEntries]);
 
   const availableSports = useMemo(() => {
     const fromWorkouts = [...workoutSessionsMap.keys()];
@@ -271,12 +305,12 @@ export default function DashboardClient({ initialTab }: Props) {
     }
 
     const fromEntries = new Set<string>();
-    for (const entry of appleHealthEntries) {
+    for (const entry of chartEntries) {
       const sport = normalizeSportKey(entry.sportType) ?? normalizeSportKey(entry.workoutType);
       if (sport) fromEntries.add(sport);
     }
     return [...fromEntries].sort((a, b) => a.localeCompare(b));
-  }, [workoutSessionsMap, appleHealthEntries]);
+  }, [workoutSessionsMap, chartEntries]);
 
   useEffect(() => {
     if (availableSports.length === 0) {
@@ -295,9 +329,9 @@ export default function DashboardClient({ initialTab }: Props) {
   }, [availableSports, selectedSport]);
 
   const workoutCount = metrics.workouts?.length ?? 0;
-  const appleHealthReadinessTrend = useMemo(() => buildReadinessTrend(appleHealthEntries), [appleHealthEntries]);
+  const appleHealthReadinessTrend = useMemo(() => buildReadinessTrend(chartEntries), [chartEntries]);
   const appleHealthReadiness = useMemo(() => {
-    const sorted = [...appleHealthEntries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const sorted = [...chartEntries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     const latest = sorted[0] ?? null;
     const previous = sorted.find((entry) => new Date(entry.date).getTime() < new Date(latest?.date ?? 0).getTime()) ?? null;
 
@@ -305,19 +339,19 @@ export default function DashboardClient({ initialTab }: Props) {
       currentHrvMax: latest?.hrv?.max ?? null,
       yesterdaySleepMinutes: previous?.sleep ?? null,
     });
-  }, [appleHealthEntries]);
+  }, [chartEntries]);
 
-  const overview = useMemo(() => buildOverviewPoints(appleHealthEntries), [appleHealthEntries]);
+  const overview = useMemo(() => buildOverviewPoints(chartEntries), [chartEntries]);
   const overviewAgg = useMemo(() => ({
     vo2: aggregateSeries(overview.vo2, granularity, mode),
     rhr: aggregateSeries(overview.rhr, granularity, mode),
     hrv: aggregateSeries(overview.hrv, granularity, mode),
     sleep: aggregateSeries(overview.sleep, granularity, mode),
     activeCalories: aggregateSeries(overview.activeCalories, granularity, mode),
-    steps: aggregateSeries(appleHealthEntries.map((e) => ({ label: toLabel(e.date), value: e.steps })), granularity, mode),
+    steps: aggregateSeries(chartEntries.map((e) => ({ label: toLabel(e.date), value: e.steps })), granularity, mode),
     readiness: aggregateSeries(
       appleHealthReadinessTrend.map((val, idx) => {
-        const entriesAsc = [...appleHealthEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        const entriesAsc = [...chartEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
         return {
           label: entriesAsc[idx] ? toLabel(entriesAsc[idx].date) : String(idx),
           value: val,
@@ -326,7 +360,7 @@ export default function DashboardClient({ initialTab }: Props) {
       granularity,
       mode
     ),
-  }), [overview, granularity, mode, appleHealthEntries, appleHealthReadinessTrend]);
+  }), [overview, granularity, mode, chartEntries, appleHealthReadinessTrend]);
 
   const sportSections = useMemo(() => {
     if (workoutSessionsMap.size > 0) {
@@ -357,23 +391,23 @@ export default function DashboardClient({ initialTab }: Props) {
     const mapped = availableSports.map((sport) => ({
       key: sport,
       sport: sportLabel(sport),
-      sessions: mapSessions(appleHealthEntries, sport),
+      sessions: mapSessions(chartEntries, sport),
       isMock: false,
     }));
 
     if (selectedSport === "all") return mapped;
     return mapped.filter((section) => section.key === selectedSport);
-  }, [workoutSessionsMap, availableSports, selectedSport, appleHealthEntries]);
+  }, [workoutSessionsMap, availableSports, selectedSport, chartEntries]);
 
   const dataCoverage = useMemo(() => {
-    if (appleHealthEntries.length === 0) {
+    if (chartEntries.length === 0) {
       return "No Apple Health data imported yet";
     }
-    const sorted = [...appleHealthEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const sorted = [...chartEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     const first = toDisplayDate(sorted[0].date);
     const last = toDisplayDate(sorted[sorted.length - 1].date);
     return `${first} to ${last}`;
-  }, [appleHealthEntries]);
+  }, [chartEntries]);
 
   const importSummary = useMemo(() => {
     return {
@@ -383,29 +417,30 @@ export default function DashboardClient({ initialTab }: Props) {
   }, [workoutCount, availableSports.length]);
 
   const sleepDrilldownRows = useMemo(() => {
-    return [...appleHealthEntries]
+    return [...chartEntries]
       .filter((e) => e.sleepDetail || e.sleepHeartRate)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 60);
-  }, [appleHealthEntries]);
+  }, [chartEntries]);
 
   const totalLowSleepHrAlerts = useMemo(() => {
     return sleepDrilldownRows.reduce((acc, row) => acc + (row.sleepHeartRate?.lowAlerts ?? 0), 0);
   }, [sleepDrilldownRows]);
 
   const readinessText = readinessInsight(appleHealthReadiness, appleHealthReadinessTrend, range);
-  const vo2Text = vo2Insight(appleHealthEntries, metrics.profile ?? null, range);
-  const rhrText = rhrInsight(appleHealthEntries, range);
-  const hrvText = hrvInsight(appleHealthEntries, range);
-  const sleepText = sleepInsight(appleHealthEntries, range);
-  const stepsText = stepsInsight(appleHealthEntries, range);
+  const vo2Text = vo2Insight(chartEntries, metrics.profile ?? null, range);
+  const rhrText = rhrInsight(chartEntries, range);
+  const hrvText = hrvInsight(chartEntries, range);
+  const sleepText = sleepInsight(chartEntries, range);
+  const stepsText = stepsInsight(chartEntries, range);
+  const activeCaloriesText = activeCaloriesInsight(chartEntries, range);
 
   const chartInsights = [
     { title: "VO2 Max", chart: <MetricChart title="VO2 Max" tooltipKey="vo2Max" data={overviewAgg.vo2} unit="mL/min·kg" />, insight: vo2Text },
     { title: "Resting Heart Rate", chart: <MetricChart title="Resting Heart Rate" tooltipKey="rhr" data={overviewAgg.rhr} unit="bpm" />, insight: rhrText },
     { title: "HRV", chart: <MetricChart title="HRV" tooltipKey="hrv" data={overviewAgg.hrv} unit="ms" />, insight: hrvText },
     { title: "Sleep", chart: <MetricChart title="Sleep" tooltipKey="sleep" data={overviewAgg.sleep} unit="min" />, insight: sleepText },
-    { title: "Active Calories", chart: <MetricChart title="Active Calories" tooltipKey="steps" data={overviewAgg.activeCalories} unit="kcal" />, insight: stepsText },
+    { title: "Active Calories", chart: <MetricChart title="Active Calories" tooltipKey="activeCalories" data={overviewAgg.activeCalories} unit="kcal" />, insight: activeCaloriesText },
     { title: "Steps", chart: <MetricChart title="Steps" tooltipKey="steps" data={overviewAgg.steps} unit="steps" />, insight: stepsText },
   ];
 
@@ -429,8 +464,7 @@ export default function DashboardClient({ initialTab }: Props) {
             </div>
             <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 p-1 text-xs">
               <span className="px-2 py-1 font-semibold text-gray-600">Version</span>
-              <Link href="/dashboard?version=v1" className="rounded bg-blue-600 px-2 py-1 font-semibold text-white">V1</Link>
-              <Link href="/dashboard?version=v0" className="rounded bg-white px-2 py-1 font-semibold text-gray-700">V0</Link>
+              <span className="rounded bg-blue-600 px-2 py-1 font-semibold text-white">V1</span>
             </div>
           </div>
           <p className="mt-1 text-sm text-gray-600">V1 shows Apple Health imports only and focuses on usable daily and workout insights.</p>
@@ -596,11 +630,12 @@ export default function DashboardClient({ initialTab }: Props) {
               )}
 
               {showSleepDrilldown && (
-                <div className="mt-3 overflow-x-auto rounded border border-gray-200">
-                  <table className="min-w-full text-xs">
-                    <thead className="bg-gray-50 text-gray-700">
+                <div className="mt-3 overflow-x-auto rounded border border-slate-200">
+                  <table className="min-w-full text-xs text-slate-900">
+                    <thead className="bg-slate-100 text-slate-800">
                       <tr>
                         <th className="px-3 py-2 text-left">Date</th>
+                        <th className="px-3 py-2 text-left">Sleep Quality</th>
                         <th className="px-3 py-2 text-left">REM</th>
                         <th className="px-3 py-2 text-left">Core</th>
                         <th className="px-3 py-2 text-left">Deep</th>
@@ -611,8 +646,9 @@ export default function DashboardClient({ initialTab }: Props) {
                     </thead>
                     <tbody>
                       {sleepDrilldownRows.map((row) => (
-                        <tr key={String(row._id)} className="border-t border-gray-100">
+                        <tr key={String(row._id)} className="border-t border-slate-100">
                           <td className="px-3 py-2 font-medium">{toDisplayDate(row.date)}</td>
+                          <td className="px-3 py-2">{sleepQualityLabel(row)}</td>
                           <td className="px-3 py-2">{Math.round(row.sleepDetail?.remMinutes ?? 0)}m</td>
                           <td className="px-3 py-2">{Math.round(row.sleepDetail?.coreMinutes ?? 0)}m</td>
                           <td className="px-3 py-2">{Math.round(row.sleepDetail?.deepMinutes ?? 0)}m</td>
@@ -631,7 +667,7 @@ export default function DashboardClient({ initialTab }: Props) {
               )}
             </div>
 
-            <SourceDataTable entries={appleHealthEntries} hideSourceFilter title="Imported Raw Data (Apple Health)" />
+            <SourceDataTable entries={chartEntries} hideSourceFilter title="Imported Raw Data (Apple Health)" />
           </section>
         )}
 
@@ -642,7 +678,7 @@ export default function DashboardClient({ initialTab }: Props) {
               <select
                 value={selectedSport}
                 onChange={(e) => setSelectedSport(e.target.value)}
-                className="rounded border border-gray-300 bg-white px-2 py-1"
+                className="rounded border border-gray-300 bg-white px-2 py-1 text-slate-900"
               >
                 <option value="all">All</option>
                 {availableSports.map((sport) => (

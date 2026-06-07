@@ -11,6 +11,9 @@ interface Props {
   mode: AggregationMode;
 }
 
+type SessionSortKey = "date" | "duration" | "distance" | "pace" | "peakHr" | "calories";
+type SplitSortKey = "km" | "distance" | "pace" | "avgHr" | "maxHr";
+
 function rollingAverage(values: number[], windowSize = 3): number[] {
   return values.map((_, idx) => {
     const start = Math.max(0, idx - windowSize + 1);
@@ -27,7 +30,7 @@ function avg(values: (number | undefined)[]): number | null {
 }
 
 function fmtPace(minPerKm: number): string {
-  if (!Number.isFinite(minPerKm) || minPerKm <= 0) return "—";
+  if (!Number.isFinite(minPerKm) || minPerKm <= 0) return "-";
   const mins = Math.floor(minPerKm);
   const secs = Math.round((minPerKm - mins) * 60);
   return `${mins}:${String(secs).padStart(2, "0")} /km`;
@@ -49,37 +52,109 @@ function fmtTime(iso: string): string {
   });
 }
 
+function dayName(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-GB", { weekday: "short" });
+}
+
+function describeSession(session: SportSession, isRunning: boolean): string {
+  const parts: string[] = [];
+
+  if (isRunning) {
+    if (session.distanceKm && session.distanceKm > 0) {
+      parts.push(`Distance ${session.distanceKm.toFixed(2)} km`);
+    }
+    if (session.paceMinPerKm && session.paceMinPerKm > 0) {
+      parts.push(`Pace ${fmtPace(session.paceMinPerKm)}`);
+    }
+    if (session.avgHeartRate && session.avgHeartRate > 0) {
+      parts.push(`Avg HR ${Math.round(session.avgHeartRate)} bpm`);
+    }
+  } else {
+    if (session.durationMinutes && session.durationMinutes > 0) {
+      parts.push(`${Math.round(session.durationMinutes)} min session`);
+    }
+    if (session.avgSpeedKmh && session.avgSpeedKmh > 0) {
+      parts.push(`Avg speed ${session.avgSpeedKmh.toFixed(1)} km/h`);
+    }
+    if (session.peakHeartRate && session.peakHeartRate > 0) {
+      parts.push(`Peak HR ${Math.round(session.peakHeartRate)} bpm`);
+    }
+  }
+
+  if (session.calories > 0) {
+    parts.push(`${Math.round(session.calories)} kcal`);
+  }
+
+  return parts.length > 0 ? parts.join(" • ") : "No detailed metrics";
+}
+
+function sanitizeDistanceKm(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
+  if (value > 80) return undefined;
+  return value;
+}
+
+function sanitizePace(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
+  if (value < 2 || value > 20) return undefined;
+  return value;
+}
+
 function StatCell({ value, suffix = "" }: { value: number | undefined | null; suffix?: string }) {
-  if (value == null || !Number.isFinite(value)) return <span className="text-gray-400">—</span>;
+  if (value == null || !Number.isFinite(value)) return <span className="text-slate-400">-</span>;
   return <span>{Math.round(value * 10) / 10}{suffix}</span>;
 }
 
 export default function SportSection({ sport, sessions, isMock, granularity, mode }: Props) {
   const [query, setQuery] = useState("");
-  const [sortKey, setSortKey] = useState<"date" | "duration" | "distance" | "pace" | "peakHr" | "calories">("date");
+  const [sortKey, setSortKey] = useState<SessionSortKey>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [showRunDrilldown, setShowRunDrilldown] = useState(false);
   const [selectedRunKey, setSelectedRunKey] = useState<string>("");
+  const [splitFilter, setSplitFilter] = useState("");
+  const [splitSortKey, setSplitSortKey] = useState<SplitSortKey>("km");
+  const [splitSortDir, setSplitSortDir] = useState<"asc" | "desc">("asc");
 
   const isRunning = sport.toLowerCase() === "running";
+  const isSnowboarding = sport.toLowerCase() === "snowboarding";
+
+  const normalizedSessions = useMemo(() => {
+    return sessions.map((session) => {
+      const distanceKm = sanitizeDistanceKm(session.distanceKm);
+      const paceFromDuration =
+        distanceKm && distanceKm > 0 && session.durationMinutes && session.durationMinutes > 0
+          ? session.durationMinutes / distanceKm
+          : undefined;
+      const paceMinPerKm = sanitizePace(session.paceMinPerKm ?? paceFromDuration);
+
+      return {
+        ...session,
+        distanceKm,
+        paceMinPerKm,
+      };
+    });
+  }, [sessions]);
 
   const filteredSessions = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return sessions;
+    if (!q) return normalizedSessions;
 
-    return sessions.filter((s) => {
+    return normalizedSessions.filter((s) => {
       const haystack = [
         s.date,
+        dayName(s.date),
         s.startTime ?? "",
         String(s.durationMinutes ?? ""),
         String(s.distanceKm ?? ""),
         String(s.paceMinPerKm ?? ""),
         String(s.peakHeartRate ?? ""),
         String(s.calories ?? ""),
+        describeSession(s, isRunning),
       ].join(" ").toLowerCase();
 
       return haystack.includes(q);
     });
-  }, [sessions, query]);
+  }, [normalizedSessions, query, isRunning]);
 
   const sorted = useMemo(() => {
     const list = [...filteredSessions];
@@ -97,7 +172,7 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
     return list;
   }, [filteredSessions, sortKey, sortDir]);
 
-  function setSort(next: "date" | "duration" | "distance" | "pace" | "peakHr" | "calories") {
+  function setSort(next: SessionSortKey) {
     if (sortKey === next) {
       setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
       return;
@@ -106,7 +181,6 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
     setSortDir(next === "date" ? "desc" : "asc");
   }
 
-  // ---- aggregates ----
   const totalCalories = filteredSessions.reduce((acc, s) => acc + (s.calories ?? 0), 0);
   const totalDuration = filteredSessions.reduce((acc, s) => acc + (s.durationMinutes ?? 0), 0);
   const totalDistanceKm = filteredSessions.reduce((acc, s) => acc + (s.distanceKm ?? 0), 0);
@@ -127,8 +201,12 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
   const averagePowerW = avg(filteredSessions.map((s) => s.avgRunningPowerW));
   const averageOscCm = avg(filteredSessions.map((s) => s.avgVerticalOscillationCm));
   const totalElevationM = filteredSessions.reduce((acc, s) => acc + (s.elevationAscendedM ?? 0), 0);
+  const avgSpeed = avg(filteredSessions.map((s) => s.avgSpeedKmh));
+  const fastestSpeed = (() => {
+    const vals = filteredSessions.map((s) => s.maxSpeedKmh).filter((v): v is number => !!v && Number.isFinite(v));
+    return vals.length > 0 ? Math.max(...vals) : null;
+  })();
 
-  // ---- charts ----
   const peakPoints: MetricPoint[] = filteredSessions.map((s) => ({ label: s.date, value: s.peakHeartRate }));
   const rolling = rollingAverage(filteredSessions.map((s) => s.peakHeartRate));
   const trendPoints: MetricPoint[] = filteredSessions.map((s, i) => ({ label: s.date, value: rolling[i] }));
@@ -144,34 +222,48 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
     (s) => s.avgStrideLengthM || s.avgGroundContactMs || s.avgRunningPowerW
   );
 
-  const sportGifByName: Record<string, string> = {
-    running: "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif",
-    walking: "https://media.giphy.com/media/3o7aD2saalBwwftBIY/giphy.gif",
-    snowboarding: "https://media.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif",
-    cycling: "https://media.giphy.com/media/26ufdipQqU2lhNA4g/giphy.gif",
-    "padel (racketball source)": "https://media.giphy.com/media/3o7abB06u9bNzA8lu8/giphy.gif",
-    padel: "https://media.giphy.com/media/3o7abB06u9bNzA8lu8/giphy.gif",
-    racketball: "https://media.giphy.com/media/3o7abB06u9bNzA8lu8/giphy.gif",
-    weightlifting: "https://media.giphy.com/media/l0MYu5a8z7x6q7QyQ/giphy.gif",
-  };
-
-  const sportKey = sport.toLowerCase();
-  const sportGif = sportGifByName[sportKey] ?? "https://media.giphy.com/media/26BRuo6sLetdllPAQ/giphy.gif";
-
   const selectedRun = useMemo(() => {
     if (!selectedRunKey) return sorted[0] ?? null;
     return sorted.find((s) => `${s.date}-${s.startTime ?? ""}` === selectedRunKey) ?? sorted[0] ?? null;
   }, [selectedRunKey, sorted]);
 
+  const filteredSplits = useMemo(() => {
+    const splits = selectedRun?.kmSplits ?? [];
+    const q = splitFilter.trim().toLowerCase();
+
+    const scoped = q
+      ? splits.filter((split) => {
+          const txt = `${split.kmIndex} ${split.distanceKm} ${split.paceMinPerKm ?? ""} ${split.avgHeartRate ?? ""} ${split.maxHeartRate ?? ""}`;
+          return txt.toLowerCase().includes(q);
+        })
+      : splits;
+
+    const sign = splitSortDir === "asc" ? 1 : -1;
+    return [...scoped].sort((a, b) => {
+      if (splitSortKey === "km") return sign * (a.kmIndex - b.kmIndex);
+      if (splitSortKey === "distance") return sign * (a.distanceKm - b.distanceKm);
+      if (splitSortKey === "pace") return sign * ((a.paceMinPerKm ?? Number.MAX_SAFE_INTEGER) - (b.paceMinPerKm ?? Number.MAX_SAFE_INTEGER));
+      if (splitSortKey === "avgHr") return sign * ((a.avgHeartRate ?? -1) - (b.avgHeartRate ?? -1));
+      return sign * ((a.maxHeartRate ?? -1) - (b.maxHeartRate ?? -1));
+    });
+  }, [selectedRun, splitFilter, splitSortKey, splitSortDir]);
+
+  function setSplitSort(next: SplitSortKey) {
+    if (splitSortKey === next) {
+      setSplitSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSplitSortKey(next);
+    setSplitSortDir("asc");
+  }
+
   return (
-    <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm" data-testid={`sport-section-${sport.toLowerCase()}`}>
-      {/* Header */}
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" data-testid={`sport-section-${sport.toLowerCase()}`}>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-lg font-bold text-gray-900">{sport}</h3>
-          <p className="text-sm text-gray-500">{filteredSessions.length} session{filteredSessions.length !== 1 ? "s" : ""}</p>
+          <h3 className="text-lg font-bold text-slate-900">{sport}</h3>
+          <p className="text-sm text-slate-600">{filteredSessions.length} session{filteredSessions.length !== 1 ? "s" : ""}</p>
         </div>
-        <img src={sportGif} alt={`${sport} action`} className="h-14 w-20 rounded-md object-cover shadow" loading="lazy" />
         {isMock && (
           <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800" data-testid="sample-data-badge">
             Sample Data
@@ -179,82 +271,96 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
         )}
       </div>
 
-      {/* Top-line overview */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {isRunning && totalDistanceKm > 0 ? (
-          <div className="rounded-lg bg-blue-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-blue-600">Total Distance</p>
-            <p className="mt-1 text-xl font-bold text-blue-900">{fmtKm(totalDistanceKm)}</p>
+        {isRunning || isSnowboarding ? (
+          <div className="rounded-lg bg-sky-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-sky-700">Total Distance</p>
+            <p className="mt-1 text-xl font-bold text-sky-900">{totalDistanceKm > 0 ? fmtKm(totalDistanceKm) : "-"}</p>
           </div>
         ) : (
-          <div className="rounded-lg bg-gray-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500">Total Calories</p>
-            <p className="mt-1 text-xl font-bold text-gray-900">{totalCalories > 0 ? Math.round(totalCalories).toLocaleString() : "—"}</p>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-600">Total Calories</p>
+            <p className="mt-1 text-xl font-bold text-slate-900">{totalCalories > 0 ? Math.round(totalCalories).toLocaleString() : "-"}</p>
           </div>
         )}
-        <div className="rounded-lg bg-gray-50 p-3">
-          <p className="text-xs uppercase tracking-wide text-gray-500">Avg Duration</p>
-          <p className="mt-1 text-xl font-bold text-gray-900">{averageDuration != null ? `${Math.round(averageDuration)} min` : "—"}</p>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-600">Avg Duration</p>
+          <p className="mt-1 text-xl font-bold text-slate-900">{averageDuration != null ? `${Math.round(averageDuration)} min` : "-"}</p>
         </div>
-        <div className="rounded-lg bg-gray-50 p-3">
-          <p className="text-xs uppercase tracking-wide text-gray-500">{isRunning ? "Avg Pace" : "Avg Peak HR"}</p>
-          <p className="mt-1 text-xl font-bold text-gray-900">
-            {isRunning ? (averagePace ? fmtPace(averagePace) : "—") : (averagePeakHr ? `${Math.round(averagePeakHr)} bpm` : "—")}
+        <div className="rounded-lg bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-600">{isRunning ? "Avg Pace" : "Avg Peak HR"}</p>
+          <p className="mt-1 text-xl font-bold text-slate-900">
+            {isRunning ? (averagePace ? fmtPace(averagePace) : "-") : (averagePeakHr ? `${Math.round(averagePeakHr)} bpm` : "-")}
           </p>
         </div>
-        <div className="rounded-lg bg-gray-50 p-3">
-          <p className="text-xs uppercase tracking-wide text-gray-500">{isRunning ? "Best Pace" : "Total Calories"}</p>
-          <p className="mt-1 text-xl font-bold text-gray-900">
-            {isRunning ? (bestPace ? fmtPace(bestPace) : "—") : (totalCalories > 0 ? Math.round(totalCalories).toLocaleString() : "—")}
+        <div className="rounded-lg bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-600">{isRunning ? "Best Pace" : "Total Calories"}</p>
+          <p className="mt-1 text-xl font-bold text-slate-900">
+            {isRunning ? (bestPace ? fmtPace(bestPace) : "-") : (totalCalories > 0 ? Math.round(totalCalories).toLocaleString() : "-")}
           </p>
         </div>
       </div>
 
-      {/* Running biomechanics averages */}
-      {hasRunningMetrics && (
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-lg bg-slate-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500">Avg HR</p>
-            <p className="mt-1 text-lg font-semibold text-gray-900">{averageAvgHr ? `${Math.round(averageAvgHr)} bpm` : "—"}</p>
+      {isSnowboarding && (
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg bg-cyan-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-cyan-700">Avg Speed</p>
+            <p className="mt-1 text-lg font-semibold text-cyan-900">{avgSpeed ? `${avgSpeed.toFixed(1)} km/h` : "-"}</p>
           </div>
-          <div className="rounded-lg bg-slate-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500">Avg Stride</p>
-            <p className="mt-1 text-lg font-semibold text-gray-900">{averageStrideM ? `${(averageStrideM * 100).toFixed(0)} cm` : "—"}</p>
+          <div className="rounded-lg bg-cyan-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-cyan-700">Fastest Speed</p>
+            <p className="mt-1 text-lg font-semibold text-cyan-900">{fastestSpeed ? `${fastestSpeed.toFixed(1)} km/h` : "-"}</p>
           </div>
-          <div className="rounded-lg bg-slate-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500">Ground Contact</p>
-            <p className="mt-1 text-lg font-semibold text-gray-900">{averageGroundContactMs ? `${Math.round(averageGroundContactMs)} ms` : "—"}</p>
-          </div>
-          <div className="rounded-lg bg-slate-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500">Running Power</p>
-            <p className="mt-1 text-lg font-semibold text-gray-900">{averagePowerW ? `${Math.round(averagePowerW)} W` : "—"}</p>
-          </div>
-          {averageOscCm && (
-            <div className="rounded-lg bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-wide text-gray-500">Vertical Oscillation</p>
-              <p className="mt-1 text-lg font-semibold text-gray-900">{averageOscCm.toFixed(1)} cm</p>
-            </div>
-          )}
-          {totalElevationM > 0 && (
-            <div className="rounded-lg bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-wide text-gray-500">Total Elevation ↑</p>
-              <p className="mt-1 text-lg font-semibold text-gray-900">{Math.round(totalElevationM)} m</p>
-            </div>
-          )}
-          {averageDistance && (
-            <div className="rounded-lg bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-wide text-gray-500">Avg Distance</p>
-              <p className="mt-1 text-lg font-semibold text-gray-900">{fmtKm(averageDistance)}</p>
-            </div>
-          )}
-          <div className="rounded-lg bg-slate-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500">Runs w/ GPS</p>
-            <p className="mt-1 text-lg font-semibold text-gray-900">{sessionsWithDist.length} / {filteredSessions.length}</p>
+          <div className="rounded-lg bg-cyan-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-cyan-700">Avg Distance</p>
+            <p className="mt-1 text-lg font-semibold text-cyan-900">{averageDistance ? fmtKm(averageDistance) : "-"}</p>
           </div>
         </div>
       )}
 
-      {/* Charts */}
+      {hasRunningMetrics && (
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-lg bg-slate-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-600">Avg HR</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">{averageAvgHr ? `${Math.round(averageAvgHr)} bpm` : "-"}</p>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-600">Avg Stride</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">{averageStrideM ? `${(averageStrideM * 100).toFixed(0)} cm` : "-"}</p>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-600">Ground Contact</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">{averageGroundContactMs ? `${Math.round(averageGroundContactMs)} ms` : "-"}</p>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-600">Running Power</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">{averagePowerW ? `${Math.round(averagePowerW)} W` : "-"}</p>
+          </div>
+          {averageOscCm && (
+            <div className="rounded-lg bg-slate-50 p-3">
+              <p className="text-xs uppercase tracking-wide text-slate-600">Vertical Oscillation</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{averageOscCm.toFixed(1)} cm</p>
+            </div>
+          )}
+          {totalElevationM > 0 && (
+            <div className="rounded-lg bg-slate-50 p-3">
+              <p className="text-xs uppercase tracking-wide text-slate-600">Total Elevation</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{Math.round(totalElevationM)} m</p>
+            </div>
+          )}
+          {averageDistance && (
+            <div className="rounded-lg bg-slate-50 p-3">
+              <p className="text-xs uppercase tracking-wide text-slate-600">Avg Distance</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{fmtKm(averageDistance)}</p>
+            </div>
+          )}
+          <div className="rounded-lg bg-slate-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-600">Runs with distance</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">{sessionsWithDist.length} / {filteredSessions.length}</p>
+          </div>
+        </div>
+      )}
+
       <div className="mt-5 grid gap-4 lg:grid-cols-2">
         {isRunning && distancePoints.length > 0 ? (
           <MetricChart title="Distance per Run" tooltipKey="runningPeak" data={distanceAgg} unit="km" variant="bar" />
@@ -268,54 +374,130 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
         )}
       </div>
 
-      {/* Per-session detail table */}
+      {isRunning && selectedRun && (
+        <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <h4 className="text-sm font-semibold text-slate-900">Run Drilldown by KM</h4>
+            <button
+              type="button"
+              onClick={() => setShowRunDrilldown((prev) => !prev)}
+              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-800"
+            >
+              {showRunDrilldown ? "Hide details" : "Drill down"}
+            </button>
+          </div>
+
+          {showRunDrilldown && (
+            <>
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+                <label className="text-slate-700">
+                  Run:
+                  <select
+                    value={selectedRunKey}
+                    onChange={(e) => setSelectedRunKey(e.target.value)}
+                    className="ml-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
+                  >
+                    {sorted.map((s) => {
+                      const key = `${s.date}-${s.startTime ?? ""}`;
+                      return (
+                        <option key={key} value={key}>{fmtDate(s.date)} {s.startTime ? fmtTime(s.startTime) : ""}</option>
+                      );
+                    })}
+                  </select>
+                </label>
+                <input
+                  value={splitFilter}
+                  onChange={(e) => setSplitFilter(e.target.value)}
+                  placeholder="Filter KM rows"
+                  className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
+                />
+              </div>
+
+              {filteredSplits.length > 0 ? (
+                <div className="overflow-x-auto rounded border border-slate-200 bg-white">
+                  <table className="min-w-full text-xs text-slate-900">
+                    <thead className="bg-slate-100 text-slate-800">
+                      <tr>
+                        <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSplitSort("km")}>KM</button></th>
+                        <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSplitSort("distance")}>Distance</button></th>
+                        <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSplitSort("pace")}>Pace</button></th>
+                        <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSplitSort("avgHr")}>Avg HR</button></th>
+                        <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSplitSort("maxHr")}>Max HR</button></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredSplits.map((split) => (
+                        <tr key={split.kmIndex} className="border-t border-slate-100">
+                          <td className="px-3 py-2">{split.kmIndex}</td>
+                          <td className="px-3 py-2">{split.distanceKm.toFixed(2)} km</td>
+                          <td className="px-3 py-2">{split.paceMinPerKm ? fmtPace(split.paceMinPerKm) : "-"}</td>
+                          <td className="px-3 py-2">{split.avgHeartRate ? Math.round(split.avgHeartRate) : "-"}</td>
+                          <td className="px-3 py-2">{split.maxHeartRate ? Math.round(split.maxHeartRate) : "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-700">No per-km splits are available for this run.</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       {filteredSessions.length > 0 && (
         <div className="mt-6">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h4 className="text-sm font-semibold text-gray-800">Session Log</h4>
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter sessions..."
-              className="rounded border border-gray-300 px-2 py-1 text-xs"
-            />
-          </div>
-          <div className="overflow-x-auto rounded-lg border border-gray-200">
-            <table className="min-w-full text-sm" data-testid="sport-session-log">
-              <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-600">
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="min-w-full text-sm text-slate-900" data-testid="sport-session-log">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-700">
                 <tr>
                   <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("date")}>Date</button></th>
-                  <th className="px-3 py-2 text-left">Time</th>
+                  <th className="px-3 py-2 text-left font-semibold">Day</th>
+                  <th className="px-3 py-2 text-left font-semibold">Time</th>
                   <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("duration")}>Duration</button></th>
                   {isRunning && <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("distance")}>Distance</button></th>}
                   {isRunning && <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("pace")}>Pace</button></th>}
                   <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("peakHr")}>HR avg/peak</button></th>
                   <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("calories")}>Calories</button></th>
+                  <th className="px-3 py-2 text-left font-semibold">Session Summary</th>
                   {hasRunningMetrics && <th className="px-3 py-2 text-left">Stride</th>}
-                  {hasRunningMetrics && <th className="px-3 py-2 text-left">Gnd Contact</th>}
+                  {hasRunningMetrics && <th className="px-3 py-2 text-left">Ground Contact</th>}
                   {hasRunningMetrics && <th className="px-3 py-2 text-left">Power</th>}
-                  {hasRunningMetrics && <th className="px-3 py-2 text-left">Elev ↑</th>}
+                  {hasRunningMetrics && <th className="px-3 py-2 text-left">Elevation</th>}
+                </tr>
+                <tr>
+                  <th colSpan={hasRunningMetrics ? (isRunning ? 13 : 11) : (isRunning ? 9 : 8)} className="px-3 py-2 text-left normal-case">
+                    <input
+                      type="text"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Filter and search sessions from table header"
+                      className="w-full rounded border border-slate-300 px-2 py-1 text-xs text-slate-900"
+                    />
+                  </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
+              <tbody className="divide-y divide-slate-100 bg-white">
                 {sorted.map((s) => (
-                  <tr key={`${s.date}-${s.startTime ?? ""}`} className="hover:bg-gray-50">
+                  <tr key={`${s.date}-${s.startTime ?? ""}`} className="hover:bg-slate-50">
                     <td className="px-3 py-2 whitespace-nowrap font-medium">{fmtDate(s.date)}</td>
-                    <td className="px-3 py-2 whitespace-nowrap text-gray-900">{s.startTime ? fmtTime(s.startTime) : "—"}</td>
-                    <td className="px-3 py-2">{s.durationMinutes != null ? `${Math.round(s.durationMinutes)} min` : "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{dayName(s.date)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{s.startTime ? fmtTime(s.startTime) : "-"}</td>
+                    <td className="px-3 py-2">{s.durationMinutes != null ? `${Math.round(s.durationMinutes)} min` : "-"}</td>
                     {isRunning && (
-                      <td className="px-3 py-2">{s.distanceKm != null && s.distanceKm > 0 ? fmtKm(s.distanceKm) : "—"}</td>
+                      <td className="px-3 py-2">{s.distanceKm != null && s.distanceKm > 0 ? fmtKm(s.distanceKm) : "-"}</td>
                     )}
                     {isRunning && (
-                      <td className="px-3 py-2">{s.paceMinPerKm ? fmtPace(s.paceMinPerKm) : "—"}</td>
+                      <td className="px-3 py-2">{s.paceMinPerKm ? fmtPace(s.paceMinPerKm) : "-"}</td>
                     )}
                     <td className="px-3 py-2">
-                      {s.avgHeartRate ? `${Math.round(s.avgHeartRate)}` : "—"}
+                      {s.avgHeartRate ? `${Math.round(s.avgHeartRate)}` : "-"}
                       {s.peakHeartRate > 0 ? ` / ${s.peakHeartRate}` : ""}{" "}
-                      <span className="text-xs text-gray-500">bpm</span>
+                      <span className="text-xs text-slate-500">bpm</span>
                     </td>
-                    <td className="px-3 py-2">{s.calories > 0 ? Math.round(s.calories) : "—"}</td>
+                    <td className="px-3 py-2">{s.calories > 0 ? Math.round(s.calories) : "-"}</td>
+                    <td className="px-3 py-2 text-xs text-slate-700">{describeSession(s, isRunning)}</td>
                     {hasRunningMetrics && (
                       <td className="px-3 py-2"><StatCell value={s.avgStrideLengthM ? s.avgStrideLengthM * 100 : undefined} suffix=" cm" /></td>
                     )}
@@ -333,55 +515,6 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
               </tbody>
             </table>
           </div>
-        </div>
-      )}
-
-      {isRunning && selectedRun && (
-        <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <h4 className="text-sm font-semibold text-blue-900">Run Drilldown by KM</h4>
-            <select
-              value={selectedRunKey}
-              onChange={(e) => setSelectedRunKey(e.target.value)}
-              className="rounded border border-blue-300 bg-white px-2 py-1 text-xs"
-            >
-              {sorted.map((s) => {
-                const key = `${s.date}-${s.startTime ?? ""}`;
-                return (
-                  <option key={key} value={key}>{fmtDate(s.date)} {s.startTime ? fmtTime(s.startTime) : ""}</option>
-                );
-              })}
-            </select>
-          </div>
-
-          {(selectedRun.kmSplits ?? []).length > 0 ? (
-            <div className="overflow-x-auto rounded border border-blue-100 bg-white">
-              <table className="min-w-full text-xs">
-                <thead className="bg-blue-50 text-blue-900">
-                  <tr>
-                    <th className="px-3 py-2 text-left">KM</th>
-                    <th className="px-3 py-2 text-left">Distance</th>
-                    <th className="px-3 py-2 text-left">Pace</th>
-                    <th className="px-3 py-2 text-left">Avg HR</th>
-                    <th className="px-3 py-2 text-left">Max HR</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedRun.kmSplits?.map((split) => (
-                    <tr key={split.kmIndex} className="border-t border-blue-50">
-                      <td className="px-3 py-2">{split.kmIndex}</td>
-                      <td className="px-3 py-2">{split.distanceKm.toFixed(2)} km</td>
-                      <td className="px-3 py-2">{split.paceMinPerKm ? fmtPace(split.paceMinPerKm) : "—"}</td>
-                      <td className="px-3 py-2">{split.avgHeartRate ? Math.round(split.avgHeartRate) : "—"}</td>
-                      <td className="px-3 py-2">{split.maxHeartRate ? Math.round(split.maxHeartRate) : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="text-xs text-blue-900">No per-km splits are available for this run.</p>
-          )}
         </div>
       )}
     </section>
