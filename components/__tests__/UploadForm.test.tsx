@@ -187,6 +187,14 @@ describe("UploadForm successful upload", () => {
         ok: true,
         status: 200,
         json: async () => ({
+          type: "blob.generate-client-token",
+          clientToken: "client-token-1",
+        }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
           requestId: "req-blob",
           status: "ok",
           counts: {
@@ -234,6 +242,15 @@ describe("UploadForm successful upload", () => {
 
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
+      "/api/health/import/upload-url",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      3,
       "/api/health/import/apple-health",
       expect.objectContaining({
         method: "POST",
@@ -241,7 +258,7 @@ describe("UploadForm successful upload", () => {
       })
     );
 
-    const fetchCall = vi.mocked(global.fetch).mock.calls[1];
+    const fetchCall = vi.mocked(global.fetch).mock.calls[2];
     const body = JSON.parse((fetchCall[1] as RequestInit).body as string) as {
       blobUrl?: string;
       weightKg?: string;
@@ -249,6 +266,38 @@ describe("UploadForm successful upload", () => {
 
     expect(body.blobUrl).toBe("https://example.public.blob.vercel-storage.com/upload.zip");
     expect(body.weightKg).toBe("85");
+  });
+
+  it("shows token preflight error details for large file uploads", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ status: "ok", missing: [] }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: async () => ({
+          error:
+            "BLOB_READ_WRITE_TOKEN format looks invalid. Expected a Vercel Blob read-write token starting with 'vercel_blob_rw_'.",
+        }),
+      } as Response);
+
+    render(<UploadForm />);
+    const input = screen.getByTestId("file-input");
+    const largeFile = new File([new Uint8Array(4 * 1024 * 1024 + 16)], "large-apple.zip", {
+      type: "application/zip",
+    });
+
+    await userEvent.upload(input, largeFile);
+    await userEvent.click(screen.getByRole("button", { name: /upload zip/i }));
+
+    await waitFor(() => screen.getByRole("alert"));
+    expect(screen.getByTestId("error-message")).toHaveTextContent("Blob token preflight failed");
+    expect(screen.getByTestId("error-message")).toHaveTextContent("vercel_blob_rw_");
+    expect(mockBlobUpload).not.toHaveBeenCalled();
   });
 });
 

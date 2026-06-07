@@ -32,6 +32,26 @@ describe("POST /api/health/import/upload-url", () => {
     expect(mockedHandleUpload).not.toHaveBeenCalled();
   });
 
+  it("returns 500 when BLOB_READ_WRITE_TOKEN has invalid format", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "invalid_token";
+
+    const request = new Request("http://localhost/api/health/import/upload-url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "blob.generate-client-token",
+        payload: { pathname: "x.zip" },
+      }),
+    });
+
+    const res = await POST(request);
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("vercel_blob_rw_");
+    expect(mockedHandleUpload).not.toHaveBeenCalled();
+  });
+
   it("returns 400 when request body is invalid JSON", async () => {
     const request = new Request("http://localhost/api/health/import/upload-url", {
       method: "POST",
@@ -96,5 +116,6 @@ describe("POST /api/health/import/upload-url", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("Blob token generation failed");
     expect(body.error).toContain("Blob auth failed");
+    expect(body.error).toContain("belongs to this Blob store");
   });
 });

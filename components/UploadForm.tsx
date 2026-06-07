@@ -101,6 +101,27 @@ export default function UploadForm({ compact = false }: Props) {
     });
   }
 
+  async function preflightBlobClientToken(file: File): Promise<void> {
+    const response = await fetch("/api/health/import/upload-url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "blob.generate-client-token",
+        payload: {
+          pathname: file.name,
+          contentType: file.type || "application/zip",
+          multipart: true,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      const details = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+      throw new Error(`Blob token preflight failed: ${details}`);
+    }
+  }
+
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
     setSelectedFile(file);
@@ -144,6 +165,8 @@ export default function UploadForm({ compact = false }: Props) {
           const suffix = missing.length > 0 ? ` Missing: ${missing.join(", ")}.` : "";
           throw new Error(`Blob upload is not ready in this deployment.${suffix}`);
         }
+
+        await preflightBlobClientToken(selectedFile);
 
         const startedAt = Date.now();
         let blob;

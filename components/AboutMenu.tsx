@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
 const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
@@ -16,6 +16,19 @@ function formatBuildDate(input?: string): string {
 export default function AboutMenu() {
   const [isOpen, setIsOpen] = useState(false);
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen]);
+
   return (
     <>
       <button
@@ -26,8 +39,18 @@ export default function AboutMenu() {
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="relative max-h-[90vh] w-[90vw] max-w-2xl overflow-auto rounded-lg border border-slate-200 bg-white p-6 text-slate-700 shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setIsOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="relative max-h-[90vh] w-[90vw] max-w-2xl overflow-auto rounded-lg border border-slate-200 bg-white p-6 text-slate-700 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="About my-health"
+          >
             <button
               onClick={() => setIsOpen(false)}
               className="absolute right-4 top-4 text-slate-400 hover:text-slate-600"

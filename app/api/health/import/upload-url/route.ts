@@ -14,6 +14,16 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
+  if (!readWriteToken.startsWith("vercel_blob_rw_")) {
+    return Response.json(
+      {
+        error:
+          "BLOB_READ_WRITE_TOKEN format looks invalid. Expected a Vercel Blob read-write token starting with 'vercel_blob_rw_'.",
+      },
+      { status: 500 }
+    );
+  }
+
   let body: HandleUploadBody;
   try {
     body = (await request.json()) as HandleUploadBody;
@@ -53,7 +63,9 @@ export async function POST(request: Request): Promise<Response> {
     console.error("[upload-url] Token generation failed:", message);
     return Response.json(
       {
-        error: `Blob token generation failed: ${message}. Check server logs and verify BLOB_READ_WRITE_TOKEN is valid.`,
+        error:
+          `Blob token generation failed: ${message}. ` +
+          "Check Vercel logs and verify BLOB_READ_WRITE_TOKEN belongs to this Blob store.",
       },
       { status: 400 }
     );
