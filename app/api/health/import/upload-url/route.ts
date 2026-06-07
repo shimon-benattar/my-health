@@ -32,9 +32,10 @@ export async function POST(request: Request): Promise<Response> {
           allowedContentTypes: [
             "application/zip",
             "application/x-zip-compressed",
+            "application/x-zip",
             "application/octet-stream",
           ],
-          maximumSizeInBytes: 512 * 1024 * 1024, // 512 MB
+          maximumSizeInBytes: 5 * 1024 * 1024 * 1024, // 5 GB
           tokenPayload: JSON.stringify({ uploadedAt: new Date().toISOString() }),
         };
       },

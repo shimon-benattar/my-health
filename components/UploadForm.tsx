@@ -8,6 +8,7 @@ import type { AppleHealthImportResult, IngestionResult } from "@/types/health";
 /** Files larger than this threshold are uploaded directly to Vercel Blob to bypass
  *  the 4.5 MB serverless function body limit. */
 const BLOB_THRESHOLD_BYTES = 4 * 1024 * 1024; // 4 MB
+const BLOB_ACCESS_MODE = process.env.NEXT_PUBLIC_BLOB_ACCESS_MODE === "public" ? "public" : "private";
 
 interface Props {
   compact?: boolean;
@@ -136,15 +137,34 @@ export default function UploadForm({ compact = false }: Props) {
       // Large files (> 4 MB) bypass the serverless function body limit by uploading
       // directly to Vercel Blob storage, then instructing the import API to fetch from there.
       if (selectedFile.size > BLOB_THRESHOLD_BYTES) {
+        const checkpointRes = await fetch("/api/health/checkpoint", { cache: "no-store" });
+        if (!checkpointRes.ok) {
+          const checkpointBody = await checkpointRes.json().catch(() => null) as { missing?: string[] } | null;
+          const missing = Array.isArray(checkpointBody?.missing) ? checkpointBody?.missing : [];
+          const suffix = missing.length > 0 ? ` Missing: ${missing.join(", ")}.` : "";
+          throw new Error(`Blob upload is not ready in this deployment.${suffix}`);
+        }
+
         const startedAt = Date.now();
-        const blob = await upload(selectedFile.name, selectedFile, {
-          access: "public",
-          handleUploadUrl: "/api/health/import/upload-url",
-          onUploadProgress: ({ loaded, total }) => {
-            const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
-            updateProgress(loaded, total, elapsedSeconds);
-          },
-        });
+        let blob;
+        try {
+          blob = await upload(selectedFile.name, selectedFile, {
+            access: BLOB_ACCESS_MODE,
+            handleUploadUrl: "/api/health/import/upload-url",
+            onUploadProgress: ({ loaded, total }) => {
+              const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
+              updateProgress(loaded, total, elapsedSeconds);
+            },
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Blob upload failed";
+          if (message.toLowerCase().includes("failed to retrieve the client token")) {
+            throw new Error(
+              "Blob client token request failed. Check /api/health/checkpoint and verify Blob env vars in Vercel for this environment."
+            );
+          }
+          throw error;
+        }
 
         setUploadPhase("processing");
         setUploadProgress(100);

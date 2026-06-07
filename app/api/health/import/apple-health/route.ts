@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { del } from "@vercel/blob";
+import { del, get as getBlob } from "@vercel/blob";
 import JSZip from "jszip";
 import { connectDB } from "@/lib/db";
 import HealthEntry from "@/lib/models/HealthEntry";
@@ -97,6 +97,8 @@ export async function POST(request: NextRequest) {
 
   let filename = "unknown";
   let blobUrlToDelete: string | null = null;
+  const blobAccessMode = process.env.BLOB_ACCESS_MODE === "public" ? "public" : "private";
+  const readWriteToken = process.env.BLOB_READ_WRITE_TOKEN;
   const warnings: string[] = [];
 
   try {
@@ -105,7 +107,7 @@ export async function POST(request: NextRequest) {
     // Accept either multipart/form-data (small files / tests) or JSON with blobUrl (large file
     // uploads that went directly to Vercel Blob to bypass the 4.5 MB function body limit).
     let zipBuffer: ArrayBuffer;
-    const contentType = request.headers.get("content-type") ?? "";
+    const contentType = request.headers?.get?.("content-type") ?? "";
 
     if (contentType.startsWith("application/json")) {
       const body = (await request.json()) as { blobUrl?: string; weightKg?: string };
@@ -117,14 +119,17 @@ export async function POST(request: NextRequest) {
 
       addLog("info", "Import request received via blob URL", { blobUrl: body.blobUrl, filename });
 
-      const blobRes = await fetch(body.blobUrl);
-      if (!blobRes.ok) {
+      const blobRes = await getBlob(body.blobUrl, {
+        access: blobAccessMode,
+        token: readWriteToken,
+      });
+      if (!blobRes || blobRes.statusCode !== 200 || !blobRes.stream) {
         return NextResponse.json(
-          { error: `Failed to fetch blob: HTTP ${blobRes.status}` },
+          { error: `Failed to fetch blob from storage: HTTP ${blobRes?.statusCode ?? 404}` },
           { status: 502 }
         );
       }
-      zipBuffer = await blobRes.arrayBuffer();
+      zipBuffer = await new Response(blobRes.stream).arrayBuffer();
     } else {
       const formData = await request.formData();
       const file = formData.get("file");

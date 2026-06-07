@@ -173,26 +173,36 @@ describe("UploadForm successful upload", () => {
       etag: "etag-1",
     });
 
-    global.fetch = vi.fn().mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        requestId: "req-blob",
-        status: "ok",
-        counts: {
-          recordsProcessed: 1,
-          workoutsProcessed: 0,
-          routesFound: 0,
-          routesMatched: 0,
-          unmatchedWorkouts: 0,
-          skipped: 0,
-          inserted: 1,
-          updated: 0,
-        },
-        warnings: [],
-        sampleUnmatchedWorkouts: [],
-      }),
-    } as Response);
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: "ok",
+          missing: [],
+        }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          requestId: "req-blob",
+          status: "ok",
+          counts: {
+            recordsProcessed: 1,
+            workoutsProcessed: 0,
+            routesFound: 0,
+            routesMatched: 0,
+            unmatchedWorkouts: 0,
+            skipped: 0,
+            inserted: 1,
+            updated: 0,
+          },
+          warnings: [],
+          sampleUnmatchedWorkouts: [],
+        }),
+      } as Response);
 
     render(<UploadForm />);
     const input = screen.getByTestId("file-input");
@@ -211,12 +221,19 @@ describe("UploadForm successful upload", () => {
       "large-apple.zip",
       largeFile,
       expect.objectContaining({
-        access: "public",
+        access: "private",
         handleUploadUrl: "/api/health/import/upload-url",
       })
     );
 
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/health/checkpoint",
+      { cache: "no-store" }
+    );
+
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      2,
       "/api/health/import/apple-health",
       expect.objectContaining({
         method: "POST",
@@ -224,7 +241,7 @@ describe("UploadForm successful upload", () => {
       })
     );
 
-    const fetchCall = vi.mocked(global.fetch).mock.calls[0];
+    const fetchCall = vi.mocked(global.fetch).mock.calls[1];
     const body = JSON.parse((fetchCall[1] as RequestInit).body as string) as {
       blobUrl?: string;
       weightKg?: string;

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
+import Link from "next/link";
+import AboutMenu from "@/components/AboutMenu";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -28,7 +30,15 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
+          <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
+            <Link href="/" className="text-sm font-semibold tracking-wide text-slate-900 hover:text-blue-700">
+              my-health
+            </Link>
+            <AboutMenu />
+          </div>
+        </header>
+        <main>{children}</main>
       </body>
     </html>
   );
