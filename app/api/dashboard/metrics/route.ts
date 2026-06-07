@@ -104,6 +104,12 @@ export async function GET(request: NextRequest) {
       durationMinutes: number | null;
       totalEnergyBurned: number | null;
       totalDistance: number | null;
+      routeSummary?: {
+        distanceEstimateMeters: number | null;
+        pointCount: number;
+        firstTimestamp: Date | null;
+        lastTimestamp: Date | null;
+      } | null;
       routeCorrelation?: { matched: boolean; confidence: number; matchReason: string };
     }>;
 
@@ -116,6 +122,7 @@ export async function GET(request: NextRequest) {
       durationMinutes: workout.durationMinutes,
       totalEnergyBurned: workout.totalEnergyBurned,
       totalDistance: workout.totalDistance,
+      routeSummary: workout.routeSummary ?? null,
       routeCorrelation: workout.routeCorrelation,
     }));
 

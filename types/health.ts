@@ -90,6 +90,12 @@ export interface DashboardWorkoutDoc {
   durationMinutes: number | null;
   totalEnergyBurned: number | null;
   totalDistance: number | null;
+  routeSummary?: {
+    distanceEstimateMeters: number | null;
+    pointCount: number;
+    firstTimestamp: Date | string | null;
+    lastTimestamp: Date | string | null;
+  } | null;
   routeCorrelation?: {
     matched: boolean;
     confidence: number;

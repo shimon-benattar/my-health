@@ -98,12 +98,28 @@ function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntr
 
     const dateKey = toLabel(workout.startDate);
     const daily = dailyByDate.get(dateKey);
+
+    // Prefer GPX-computed distance over stored totalDistance (often null in Apple export)
+    const distanceMeters =
+      workout.routeSummary?.distanceEstimateMeters ??
+      (workout.totalDistance !== null && workout.totalDistance !== undefined
+        ? workout.totalDistance * 1000
+        : undefined);
+
+    const durationMinutes = workout.durationMinutes ?? undefined;
+    const paceMinPerKm =
+      distanceMeters && distanceMeters > 0 && durationMinutes
+        ? durationMinutes / (distanceMeters / 1000)
+        : undefined;
+
     const session: SportSession = {
       date: dateKey,
       peakHeartRate: daily?.heartRate?.max ?? 0,
       calories: workout.totalEnergyBurned ?? daily?.activeCalories ?? 0,
       steps: daily?.steps ?? 0,
-      durationMinutes: workout.durationMinutes ?? undefined,
+      durationMinutes,
+      distanceMeters,
+      paceMinPerKm,
     };
 
     const existing = bySport.get(sport) ?? [];
@@ -239,12 +255,12 @@ export default function DashboardClient({ initialTab }: Props) {
     );
   }, [metrics.entries]);
 
-  const readinessText = readinessInsight(metrics.readiness, metrics.readinessTrend);
-  const vo2Text = vo2Insight(metrics.entries, metrics.profile ?? null);
-  const rhrText = rhrInsight(metrics.entries);
-  const hrvText = hrvInsight(metrics.entries);
-  const sleepText = sleepInsight(metrics.entries);
-  const stepsText = stepsInsight(metrics.entries);
+  const readinessText = readinessInsight(metrics.readiness, metrics.readinessTrend, range);
+  const vo2Text = vo2Insight(metrics.entries, metrics.profile ?? null, range);
+  const rhrText = rhrInsight(metrics.entries, range);
+  const hrvText = hrvInsight(metrics.entries, range);
+  const sleepText = sleepInsight(metrics.entries, range);
+  const stepsText = stepsInsight(metrics.entries, range);
 
   const chartInsights = [
     { title: "VO2 Max", chart: <MetricChart title="VO2 Max" tooltipKey="vo2Max" data={overviewAgg.vo2} unit="mL/min·kg" />, insight: vo2Text },

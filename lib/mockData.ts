@@ -4,6 +4,8 @@ export interface SportSession {
   calories: number;
   steps: number;
   durationMinutes?: number;
+  distanceMeters?: number;
+  paceMinPerKm?: number;
 }
 
 const MOCK_SESSIONS: Record<string, SportSession[]> = {
