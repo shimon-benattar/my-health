@@ -13,7 +13,6 @@ import { hrvInsight, readinessInsight, rhrInsight, sleepInsight, stepsInsight, v
 import type { DashboardMetricsResponse, HealthEntryDoc } from "@/types/health";
 
 type Tab = "overview" | "sport";
-type RangeParam = "7d" | "30d" | "90d" | "all";
 
 interface Props {
   initialTab: Tab;
@@ -35,17 +34,7 @@ function buildOverviewPoints(entries: HealthEntryDoc[]) {
 }
 
 function sportFromEntry(entry: HealthEntryDoc): string | null {
-  const sport = entry.sportType?.trim().toLowerCase();
-  if (sport) return sport;
-
-  const workout = entry.workoutType?.trim().toLowerCase();
-  if (!workout) return null;
-  if (workout.includes("running")) return "running";
-  if (workout.includes("padel")) return "padel";
-  if (workout.includes("racketball")) return "racketball";
-  if (workout.includes("walk")) return "walking";
-  if (workout.includes("cycling") || workout.includes("bike")) return "cycling";
-  return workout;
+  return entry.sportType?.trim().toLowerCase() ?? null;
 }
 
 function mapSessions(entries: HealthEntryDoc[], sport: string): SportSession[] {
@@ -67,16 +56,8 @@ function mapSessions(entries: HealthEntryDoc[], sport: string): SportSession[] {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function titleCase(input: string): string {
-  return input
-    .split(/\s+/)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
 export default function DashboardClient({ initialTab }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [range, setRange] = useState<RangeParam>("all");
   const [granularity, setGranularity] = useState<Granularity>("day");
   const [mode, setMode] = useState<AggregationMode>("average");
   const [loading, setLoading] = useState(true);
@@ -90,7 +71,7 @@ export default function DashboardClient({ initialTab }: Props) {
       setLoading(true);
       setError("");
       try {
-        const res = await fetch(`/api/dashboard/metrics?range=${range}`, { cache: "no-store" });
+        const res = await fetch("/api/dashboard/metrics?range=30d", { cache: "no-store" });
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
@@ -113,7 +94,7 @@ export default function DashboardClient({ initialTab }: Props) {
     return () => {
       active = false;
     };
-  }, [range]);
+  }, []);
 
   const overview = useMemo(() => buildOverviewPoints(metrics.entries), [metrics.entries]);
   const overviewAgg = useMemo(() => ({
@@ -136,57 +117,11 @@ export default function DashboardClient({ initialTab }: Props) {
     ),
   }), [overview, granularity, mode, metrics.entries, metrics.readinessTrend]);
 
-  const sportSections = useMemo(() => {
-    const allSports = new Set<string>();
-    for (const entry of metrics.entries) {
-      const sport = sportFromEntry(entry);
-      if (sport) {
-        allSports.add(sport);
-      }
-    }
+  const runningReal = useMemo(() => mapSessions(metrics.entries, "running"), [metrics.entries]);
+  const racketballReal = useMemo(() => mapSessions(metrics.entries, "racketball"), [metrics.entries]);
 
-    const sortedSports = [...allSports].sort((a, b) => a.localeCompare(b));
-    if (sortedSports.length === 0) {
-      return [
-        {
-          sport: "Padel",
-          sessions: getMockSportData("padel"),
-          isMock: true,
-        },
-      ];
-    }
-
-    return sortedSports.map((sport) => ({
-      sport: titleCase(sport),
-      sessions: mapSessions(metrics.entries, sport),
-      isMock: false,
-    }));
-  }, [metrics.entries]);
-
-  const dataCoverage = useMemo(() => {
-    if (metrics.entries.length === 0) {
-      return "No imported entries";
-    }
-    const sorted = [...metrics.entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    const first = toLabel(sorted[0].date);
-    const last = toLabel(sorted[sorted.length - 1].date);
-    return `${first} to ${last}`;
-  }, [metrics.entries]);
-
-  const sourceSummary = useMemo(() => {
-    return metrics.entries.reduce(
-      (acc, entry) => {
-        const source = entry.sourceType ?? "csv";
-        if (source === "apple-health") {
-          acc.appleHealth += 1;
-        } else {
-          acc.csv += 1;
-        }
-        return acc;
-      },
-      { csv: 0, appleHealth: 0 }
-    );
-  }, [metrics.entries]);
+  const runningSessions = runningReal;
+  const racketballSessions = racketballReal.length > 0 ? racketballReal : getMockSportData("padel");
 
   const readinessText = readinessInsight(metrics.readiness, metrics.readinessTrend);
   const vo2Text = vo2Insight(metrics.entries, metrics.profile ?? null);
@@ -210,34 +145,10 @@ export default function DashboardClient({ initialTab }: Props) {
           <div className="flex items-center justify-between gap-4">
             <div>
               <Link href="/" className="text-sm font-medium text-blue-700 hover:text-blue-800">← Back to Landing</Link>
-              <h1 className="mt-1 text-2xl font-bold text-gray-900">Health Dashboard V1</h1>
-            </div>
-            <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 p-1 text-xs">
-              <span className="px-2 py-1 font-semibold text-gray-600">Version</span>
-              <Link href="/dashboard?version=v1" className="rounded bg-blue-600 px-2 py-1 font-semibold text-white">V1</Link>
-              <Link href="/dashboard?version=v0" className="rounded bg-white px-2 py-1 font-semibold text-gray-700">V0</Link>
+              <h1 className="mt-1 text-2xl font-bold text-gray-900">Health Dashboard</h1>
             </div>
           </div>
-          <p className="mt-1 text-sm text-gray-600">V1 uses all imported history by default and dynamically adapts charts and sport views to your actual imported Apple Health data.</p>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
-              <p className="text-xs uppercase tracking-wide text-gray-500">Date Coverage</p>
-              <p className="mt-1 font-semibold text-gray-900">{dataCoverage}</p>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
-              <p className="text-xs uppercase tracking-wide text-gray-500">Days Imported</p>
-              <p className="mt-1 font-semibold text-gray-900">{metrics.entries.length}</p>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
-              <p className="text-xs uppercase tracking-wide text-gray-500">Apple Health Days</p>
-              <p className="mt-1 font-semibold text-gray-900">{sourceSummary.appleHealth}</p>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
-              <p className="text-xs uppercase tracking-wide text-gray-500">CSV Days</p>
-              <p className="mt-1 font-semibold text-gray-900">{sourceSummary.csv}</p>
-            </div>
-          </div>
+          <p className="mt-1 text-sm text-gray-600">Interactive trends, readiness insights, and sport performance deep-dive.</p>
 
           <div className="mt-4 inline-flex rounded-lg border border-gray-200 bg-gray-100 p-1">
             <button
@@ -256,20 +167,6 @@ export default function DashboardClient({ initialTab }: Props) {
             >
               Sport Performance
             </button>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-            <span className="font-medium text-gray-700">Range:</span>
-            {(["all", "90d", "30d", "7d"] as RangeParam[]).map((value) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setRange(value)}
-                className={`rounded px-2 py-1 ${range === value ? "bg-blue-600 text-white" : "bg-white text-gray-700 border border-gray-300"}`}
-              >
-                {value}
-              </button>
-            ))}
           </div>
         </div>
       </header>
@@ -328,16 +225,15 @@ export default function DashboardClient({ initialTab }: Props) {
 
         {!loading && !error && tab === "sport" && (
           <section className="space-y-5" data-testid="sport-panel">
-            {sportSections.map((section) => (
-              <SportSection
-                key={section.sport}
-                sport={section.sport}
-                sessions={section.sessions}
-                isMock={section.isMock}
-                granularity={granularity}
-                mode={mode}
-              />
-            ))}
+            {runningSessions.length > 0 ? (
+              <SportSection sport="Running" sessions={runningSessions} isMock={false} granularity={granularity} mode={mode} />
+            ) : (
+              <div className="rounded-lg border border-dashed border-gray-300 bg-white p-4 text-sm text-gray-600">
+                Running sessions were detected in your CSV export format, but existing database rows may be from earlier imports.
+                Re-import the CSV from the landing page to populate running workout metadata.
+              </div>
+            )}
+            <SportSection sport="Padel" sessions={racketballSessions} isMock={racketballReal.length === 0} granularity={granularity} mode={mode} />
           </section>
         )}
       </main>

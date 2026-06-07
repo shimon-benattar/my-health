@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 import IngestionSummary from "@/components/IngestionSummary";
 import type { AppleHealthImportResult, IngestionResult } from "@/types/health";
@@ -25,6 +25,18 @@ export default function UploadForm({ compact = false }: Props) {
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [uploadSpeedMbps, setUploadSpeedMbps] = useState<number | null>(null);
   const [uploadPhase, setUploadPhase] = useState<"uploading" | "processing">("uploading");
+
+  useEffect(() => {
+    if (status !== "uploading" || uploadPhase !== "processing") {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setUploadProgress((prev) => Math.min(99, prev + 1));
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [status, uploadPhase]);
 
   function formatEta(seconds: number | null): string {
     if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return "Calculating...";
@@ -145,7 +157,7 @@ export default function UploadForm({ compact = false }: Props) {
     try {
       const updateProgress = (loaded: number, total: number, elapsedSeconds: number) => {
         if (!Number.isFinite(total) || total <= 0) return;
-        const progress = Math.min(100, Math.max(0, (loaded / total) * 100));
+        const progress = Math.min(95, Math.max(0, (loaded / total) * 95));
         const bytesPerSecond = loaded / elapsedSeconds;
         const remainingBytes = Math.max(0, total - loaded);
         const remainingSeconds = bytesPerSecond > 0 ? remainingBytes / bytesPerSecond : null;
@@ -197,8 +209,9 @@ export default function UploadForm({ compact = false }: Props) {
         }
 
         setUploadPhase("processing");
-        setUploadProgress(100);
+        setUploadProgress((prev) => Math.max(96, prev));
         setEtaSeconds(null);
+        setUploadSpeedMbps(null);
 
         const importRes = await fetch("/api/health/import/apple-health", {
           method: "POST",
@@ -214,6 +227,7 @@ export default function UploadForm({ compact = false }: Props) {
         }
 
         setResult(importBody as IngestionResult | AppleHealthImportResult);
+        setUploadProgress(100);
         setStatus("success");
         setSelectedFile(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
@@ -255,11 +269,13 @@ export default function UploadForm({ compact = false }: Props) {
       }
 
       setUploadPhase("processing");
-      setUploadProgress(100);
+      setUploadProgress((prev) => Math.max(96, prev));
       setEtaSeconds(0);
+      setUploadSpeedMbps(null);
 
       const data = finalResponse.body as IngestionResult | AppleHealthImportResult;
       setResult(data);
+      setUploadProgress(100);
       setStatus("success");
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -334,9 +350,21 @@ export default function UploadForm({ compact = false }: Props) {
 
       {isUploading && (
         <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50/70 p-4" data-testid="upload-progress-panel">
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px]" data-testid="upload-stage-labels">
+            <span className={`rounded-full px-2 py-1 font-semibold ${uploadPhase === "uploading" ? "bg-blue-600 text-white" : "bg-green-100 text-green-800"}`}>
+              1. Upload ZIP
+            </span>
+            <span className={`rounded-full px-2 py-1 font-semibold ${uploadPhase === "processing" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500"}`}>
+              2. Import and map workouts
+            </span>
+            <span className={`rounded-full px-2 py-1 font-semibold ${uploadPhase === "processing" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500"}`}>
+              3. Save metrics to dashboard
+            </span>
+          </div>
+
           <div className="mb-2 flex items-center justify-between text-xs text-blue-900">
             <span className="font-semibold">
-              {uploadPhase === "uploading" ? "Uploading ZIP" : "Processing Imported Data"}
+              {uploadPhase === "uploading" ? "Uploading ZIP" : "Importing and mapping workouts"}
             </span>
             <span>{Math.round(uploadProgress)}%</span>
           </div>
@@ -351,7 +379,7 @@ export default function UploadForm({ compact = false }: Props) {
           </div>
 
           <div className="mt-2 flex items-center justify-between text-xs text-blue-900">
-            <span data-testid="upload-eta">{uploadPhase === "uploading" ? formatEta(etaSeconds) : "Finalizing and saving to database..."}</span>
+            <span data-testid="upload-eta">{uploadPhase === "uploading" ? formatEta(etaSeconds) : "Linking routes to workouts and saving all metrics..."}</span>
             <span>{uploadSpeedMbps ? `${uploadSpeedMbps.toFixed(2)} Mbps` : ""}</span>
           </div>
 

@@ -3,7 +3,7 @@ import type { SportSession } from "@/lib/mockData";
 import { aggregateSeries, type AggregationMode, type Granularity } from "@/lib/timeAggregation";
 
 interface Props {
-  sport: "Running" | "Padel";
+  sport: string;
   sessions: SportSession[];
   isMock: boolean;
   granularity: Granularity;
@@ -23,7 +23,7 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
   const totalCalories = sessions.reduce((acc, s) => acc + s.calories, 0);
   const totalSteps = sessions.reduce((acc, s) => acc + s.steps, 0);
   const totalDuration = sessions.reduce((acc, s) => acc + (s.durationMinutes ?? 0), 0);
-  const loadLabel = sport === "Running" ? "Aerobic Endurance" : "Explosive Interval";
+  const loadLabel = sport.toLowerCase() === "running" ? "Aerobic Endurance" : "Mixed Sport Load";
   const averagePeak = sessions.length > 0
     ? Math.round(sessions.reduce((acc, s) => acc + s.peakHeartRate, 0) / sessions.length)
     : null;
@@ -95,14 +95,14 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
       <div className="mt-5 grid gap-4 lg:grid-cols-2">
         <MetricChart
           title={`${sport} Peak Intensity`}
-          tooltipKey={sport === "Running" ? "runningPeak" : "padelPeak"}
+          tooltipKey={sport.toLowerCase() === "running" ? "runningPeak" : "padelPeak"}
           data={peakAgg}
           unit="bpm"
           variant="bar"
         />
         <MetricChart
           title={`${sport} Peak Trend`}
-          tooltipKey={sport === "Running" ? "runningPeak" : "padelPeak"}
+          tooltipKey={sport.toLowerCase() === "running" ? "runningPeak" : "padelPeak"}
           data={trendAgg}
           unit="bpm"
           variant="line"
