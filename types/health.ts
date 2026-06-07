@@ -93,10 +93,15 @@ export interface HealthEntryDoc {
 }
 
 export interface UserProfile {
+  key?: string;
   name: string;
   birthdate: string; // DD/MM/YYYY
   weightKg: number;
   heightCm: number;
+  imageUrl?: string | null;
+  sex?: "female" | "male" | "other" | null;
+  timezone?: string | null;
+  notes?: string | null;
   updatedAt?: string;
 }
 

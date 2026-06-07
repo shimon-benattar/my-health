@@ -6,6 +6,10 @@ export interface IUserProfile extends Document {
   birthdate: string;
   weightKg: number;
   heightCm: number;
+  imageUrl?: string | null;
+  sex?: "female" | "male" | "other" | null;
+  timezone?: string | null;
+  notes?: string | null;
   updatedAt: Date;
 }
 
@@ -16,6 +20,10 @@ const UserProfileSchema = new Schema<IUserProfile>(
     birthdate: { type: String, required: true },
     weightKg: { type: Number, required: true },
     heightCm: { type: Number, required: true },
+    imageUrl: { type: String, default: null },
+    sex: { type: String, enum: ["female", "male", "other", null], default: null },
+    timezone: { type: String, default: "Asia/Jerusalem" },
+    notes: { type: String, default: null },
   },
   { timestamps: { createdAt: false, updatedAt: true } }
 );

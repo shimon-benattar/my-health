@@ -14,6 +14,10 @@ import type { HealthEntryInput, AppleHealthImportResult } from "@/types/health";
 
 const ARCHIVE_TTL_DAYS = 30;
 
+async function waitMs(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function toDateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -336,6 +340,7 @@ export async function POST(request: NextRequest) {
   const blobAccessMode = process.env.BLOB_ACCESS_MODE === "public" ? "public" : "private";
   const readWriteToken = process.env.BLOB_READ_WRITE_TOKEN;
   const warnings: string[] = [];
+  let importSucceeded = false;
 
   try {
     await connectDB();
@@ -355,10 +360,38 @@ export async function POST(request: NextRequest) {
 
       addLog("info", "Import request received via blob URL", { blobUrl: body.blobUrl, filename });
 
-      const blobRes = await getBlob(body.blobUrl, {
-        access: blobAccessMode,
-        token: readWriteToken,
-      });
+      const accessAttempts: Array<"private" | "public"> =
+        blobAccessMode === "private" ? ["private", "public"] : ["public", "private"];
+
+      let blobRes: Awaited<ReturnType<typeof getBlob>> | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        for (const access of accessAttempts) {
+          blobRes = await getBlob(body.blobUrl, {
+            access,
+            token: readWriteToken,
+          });
+
+          if (blobRes?.statusCode === 200 && blobRes.stream) {
+            addLog("info", "Fetched blob for import", { access, attempt: attempt + 1 });
+            break;
+          }
+
+          addLog("warn", "Blob fetch attempt failed", {
+            access,
+            attempt: attempt + 1,
+            statusCode: blobRes?.statusCode ?? null,
+          });
+        }
+
+        if (blobRes?.statusCode === 200 && blobRes.stream) {
+          break;
+        }
+
+        if (attempt < 2) {
+          await waitMs(500 * (attempt + 1));
+        }
+      }
+
       if (!blobRes || blobRes.statusCode !== 200 || !blobRes.stream) {
         return NextResponse.json(
           { error: `Failed to fetch blob from storage: HTTP ${blobRes?.statusCode ?? 404}` },
@@ -709,6 +742,7 @@ export async function POST(request: NextRequest) {
       skipped: result.counts.skipped,
     });
 
+    importSucceeded = true;
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
     addLog("error", "Import failed", {
@@ -733,8 +767,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   } finally {
-    // Clean up the blob after processing (success or failure) to avoid storage waste.
-    if (blobUrlToDelete) {
+    // Clean up blob only after successful import. On failure, keep it for retry/debug.
+    if (blobUrlToDelete && importSucceeded) {
       await del(blobUrlToDelete).catch((e) =>
         console.warn("[apple-health] Failed to delete blob:", blobUrlToDelete, e)
       );

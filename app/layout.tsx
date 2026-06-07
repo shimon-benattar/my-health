@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import Link from "next/link";
 import AboutMenu from "@/components/AboutMenu";
+import ProfileMenu from "@/components/ProfileMenu";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -35,7 +36,10 @@ export default function RootLayout({
             <Link href="/" className="text-sm font-semibold tracking-wide text-slate-900 hover:text-blue-700">
               my-health
             </Link>
-            <AboutMenu />
+            <div className="flex items-center gap-2">
+              <ProfileMenu />
+              <AboutMenu />
+            </div>
           </div>
         </header>
         <main>{children}</main>
