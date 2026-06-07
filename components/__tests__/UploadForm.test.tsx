@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { upload } from "@vercel/blob/client";
 import UploadForm from "@/components/UploadForm";
+
+vi.mock("@vercel/blob/client", () => ({
+  upload: vi.fn(),
+}));
+
+const mockBlobUpload = vi.mocked(upload);
 
 // ---------------------------------------------------------------------------
 // Mock global fetch
@@ -16,6 +23,7 @@ function mockFetch(body: object, status = 200) {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  mockBlobUpload.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -153,6 +161,77 @@ describe("UploadForm successful upload", () => {
       expect.objectContaining({ method: "POST" })
     );
     expect(screen.getByText(/apple health import complete/i)).toBeInTheDocument();
+  });
+
+  it("uploads large files to Blob first, then imports using blobUrl", async () => {
+    mockBlobUpload.mockResolvedValue({
+      url: "https://example.public.blob.vercel-storage.com/upload.zip",
+      pathname: "upload.zip",
+      contentType: "application/zip",
+      contentDisposition: "attachment",
+      downloadUrl: "https://example.public.blob.vercel-storage.com/upload.zip?download=1",
+      etag: "etag-1",
+    });
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        requestId: "req-blob",
+        status: "ok",
+        counts: {
+          recordsProcessed: 1,
+          workoutsProcessed: 0,
+          routesFound: 0,
+          routesMatched: 0,
+          unmatchedWorkouts: 0,
+          skipped: 0,
+          inserted: 1,
+          updated: 0,
+        },
+        warnings: [],
+        sampleUnmatchedWorkouts: [],
+      }),
+    } as Response);
+
+    render(<UploadForm />);
+    const input = screen.getByTestId("file-input");
+    const largeFile = new File([new Uint8Array(4 * 1024 * 1024 + 16)], "large-apple.zip", {
+      type: "application/zip",
+    });
+
+    await userEvent.upload(input, largeFile);
+    await userEvent.click(screen.getByRole("button", { name: /upload zip/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toBeInTheDocument();
+    });
+
+    expect(mockBlobUpload).toHaveBeenCalledWith(
+      "large-apple.zip",
+      largeFile,
+      expect.objectContaining({
+        access: "public",
+        handleUploadUrl: "/api/health/import/upload-url",
+      })
+    );
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/health/import/apple-health",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    const fetchCall = vi.mocked(global.fetch).mock.calls[0];
+    const body = JSON.parse((fetchCall[1] as RequestInit).body as string) as {
+      blobUrl?: string;
+      weightKg?: string;
+    };
+
+    expect(body.blobUrl).toBe("https://example.public.blob.vercel-storage.com/upload.zip");
+    expect(body.weightKg).toBe("85");
   });
 });
 

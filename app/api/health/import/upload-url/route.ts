@@ -3,6 +3,17 @@ import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 export const runtime = "nodejs";
 
 export async function POST(request: Request): Promise<Response> {
+  const readWriteToken = process.env.BLOB_READ_WRITE_TOKEN;
+  if (!readWriteToken) {
+    return Response.json(
+      {
+        error:
+          "Missing BLOB_READ_WRITE_TOKEN. Add it to your Vercel project environment variables and redeploy.",
+      },
+      { status: 500 }
+    );
+  }
+
   let body: HandleUploadBody;
   try {
     body = (await request.json()) as HandleUploadBody;
@@ -12,6 +23,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const jsonResponse = await handleUpload({
+      token: readWriteToken,
       body,
       request,
       onBeforeGenerateToken: async () => {
