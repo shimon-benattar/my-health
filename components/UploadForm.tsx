@@ -148,6 +148,11 @@ export default function UploadForm({ compact = false }: Props) {
         const startedAt = Date.now();
         let blob;
         try {
+          console.log("[UploadForm] Starting large file upload to Blob", {
+            fileName: selectedFile.name,
+            fileSize: selectedFile.size,
+            accessMode: BLOB_ACCESS_MODE,
+          });
           blob = await upload(selectedFile.name, selectedFile, {
             access: BLOB_ACCESS_MODE,
             handleUploadUrl: "/api/health/import/upload-url",
@@ -156,11 +161,13 @@ export default function UploadForm({ compact = false }: Props) {
               updateProgress(loaded, total, elapsedSeconds);
             },
           });
+          console.log("[UploadForm] Blob upload completed", { url: blob.url });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Blob upload failed";
+          console.error("[UploadForm] Blob upload failed:", message);
           if (message.toLowerCase().includes("failed to retrieve the client token")) {
             throw new Error(
-              "Blob client token request failed. Check /api/health/checkpoint and verify Blob env vars in Vercel for this environment."
+              `Blob client token request failed: ${message}\n\nEnsure BLOB_READ_WRITE_TOKEN is valid and set in Vercel Environment Variables.\n\nDebug: Check browser console and server logs for details.`
             );
           }
           throw error;

@@ -94,6 +94,7 @@ describe("POST /api/health/import/upload-url", () => {
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("Blob auth failed");
+    expect(body.error).toContain("Blob token generation failed");
+    expect(body.error).toContain("Blob auth failed");
   });
 });

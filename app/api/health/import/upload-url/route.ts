@@ -22,11 +22,13 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
+    console.log("[upload-url] Handling client token request");
     const jsonResponse = await handleUpload({
       token: readWriteToken,
       body,
       request,
       onBeforeGenerateToken: async () => {
+        console.log("[upload-url] Generating client token");
         // Internal tool — no auth required.
         return {
           allowedContentTypes: [
@@ -44,8 +46,16 @@ export async function POST(request: Request): Promise<Response> {
       },
     });
 
+    console.log("[upload-url] Token generated successfully");
     return Response.json(jsonResponse);
   } catch (error) {
-    return Response.json({ error: (error as Error).message }, { status: 400 });
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[upload-url] Token generation failed:", message);
+    return Response.json(
+      {
+        error: `Blob token generation failed: ${message}. Check server logs and verify BLOB_READ_WRITE_TOKEN is valid.`,
+      },
+      { status: 400 }
+    );
   }
 }
