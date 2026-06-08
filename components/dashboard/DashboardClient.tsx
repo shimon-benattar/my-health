@@ -68,8 +68,51 @@ function isAppleHealthEntry(entry: HealthEntryDoc): boolean {
   return (entry.sourceType ?? "csv") === "apple-health";
 }
 
-function isSyntheticGapEntry(entry: HealthEntryDoc): boolean {
-  return (entry.sourceFile ?? "").toLowerCase() === "synthetic-shabbat-augmentation";
+function formatSleepDuration(minutes: number | null | undefined): string {
+  if (!minutes || minutes <= 0) return "-";
+  const whole = Math.round(minutes);
+  const hours = Math.floor(whole / 60);
+  const mins = whole % 60;
+  return `${hours}h ${mins}m`;
+}
+
+function normalizeManualAdjustments(entry: HealthEntryDoc): HealthEntryDoc | null {
+  const syntheticSleep = entry.syntheticAdjustments?.shabbatSleepAddedMinutes ?? 0;
+  const syntheticSteps = entry.syntheticAdjustments?.shabbatStepsAdded ?? 0;
+  const sourceIsSyntheticOnly = (entry.sourceFile ?? "").toLowerCase() === "synthetic-shabbat-augmentation";
+
+  const adjustedSleep = entry.sleep !== null ? Math.max(0, (entry.sleep ?? 0) - syntheticSleep) : null;
+  const adjustedSteps = entry.steps !== null ? Math.max(0, (entry.steps ?? 0) - syntheticSteps) : null;
+  const adjustedAsleep = Math.max(0, (entry.sleepDetail?.asleepMinutes ?? 0) - syntheticSleep);
+
+  const noRealDailyValues =
+    (adjustedSleep === null || adjustedSleep === 0) &&
+    (adjustedSteps === null || adjustedSteps === 0) &&
+    entry.activeCalories === null &&
+    entry.cardioFitness === null &&
+    entry.restingHeartRate === null &&
+    entry.hrv === null &&
+    entry.heartRate === null;
+
+  if (sourceIsSyntheticOnly || noRealDailyValues) {
+    return null;
+  }
+
+  return {
+    ...entry,
+    sleep: adjustedSleep,
+    steps: adjustedSteps,
+    sleepDetail: entry.sleepDetail
+      ? {
+          ...entry.sleepDetail,
+          asleepMinutes: adjustedAsleep,
+        }
+      : entry.sleepDetail,
+    syntheticAdjustments: {
+      shabbatSleepAddedMinutes: 0,
+      shabbatStepsAdded: 0,
+    },
+  };
 }
 
 function sleepQualityLabel(entry: HealthEntryDoc): string {
@@ -83,10 +126,10 @@ function sleepQualityLabel(entry: HealthEntryDoc): string {
   const remRatio = rem / totalSleep;
   const awakeRatio = awake / totalSleep;
 
-  if (totalSleep >= 450 && deepRatio >= 0.18 && remRatio >= 0.18 && awakeRatio <= 0.12) return "Strong restorative sleep";
-  if (totalSleep >= 390 && deepRatio >= 0.14 && remRatio >= 0.15 && awakeRatio <= 0.16) return "Balanced sleep";
-  if (totalSleep >= 330) return "Moderate sleep quality";
-  return "Short or fragmented sleep";
+  if (totalSleep >= 450 && deepRatio >= 0.18 && remRatio >= 0.18 && awakeRatio <= 0.12) return "Excellent duration and sleep architecture";
+  if (totalSleep >= 390 && deepRatio >= 0.14 && remRatio >= 0.15 && awakeRatio <= 0.16) return "Good structure with balanced deep and REM";
+  if (totalSleep >= 330) return "Adequate total sleep, but quality can improve";
+  return "Short or fragmented night, recovery likely reduced";
 }
 
 function buildReadinessTrend(entries: HealthEntryDoc[]): number[] {
@@ -241,8 +284,8 @@ export default function DashboardClient({ initialTab }: Props) {
       setError("");
       try {
         const params = new URLSearchParams({ range });
-        if (customStartDate) params.set("startDate", customStartDate);
-        if (customEndDate) params.set("endDate", customEndDate);
+        if (showDateFilter && customStartDate) params.set("startDate", customStartDate);
+        if (showDateFilter && customEndDate) params.set("endDate", customEndDate);
 
         const res = await fetch(`/api/dashboard/metrics?${params.toString()}`, { cache: "no-store" });
         if (!res.ok) {
@@ -267,13 +310,14 @@ export default function DashboardClient({ initialTab }: Props) {
     return () => {
       active = false;
     };
-  }, [range, customStartDate, customEndDate]);
+  }, [range, customStartDate, customEndDate, showDateFilter]);
 
   const appleHealthEntries = useMemo(() => metrics.entries.filter(isAppleHealthEntry), [metrics.entries]);
-  const chartEntries = useMemo(
-    () => appleHealthEntries.filter((entry) => !isSyntheticGapEntry(entry)),
-    [appleHealthEntries]
-  );
+  const chartEntries = useMemo(() => {
+    return appleHealthEntries
+      .map((entry) => normalizeManualAdjustments(entry))
+      .filter((entry): entry is HealthEntryDoc => entry !== null);
+  }, [appleHealthEntries]);
 
   const earliestDate = useMemo(() => {
     if (chartEntries.length === 0) return "";
@@ -286,15 +330,6 @@ export default function DashboardClient({ initialTab }: Props) {
     const sorted = [...chartEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     return toInputDate(sorted[sorted.length - 1].date);
   }, [chartEntries]);
-
-  useEffect(() => {
-    if (!customStartDate && earliestDate) {
-      setCustomStartDate(earliestDate);
-    }
-    if (!customEndDate && latestDate) {
-      setCustomEndDate(latestDate);
-    }
-  }, [earliestDate, latestDate, customStartDate, customEndDate]);
 
   const workoutSessionsMap = useMemo(() => mapWorkoutSessions(metrics.workouts ?? [], chartEntries), [metrics.workouts, chartEntries]);
 
@@ -449,8 +484,9 @@ export default function DashboardClient({ initialTab }: Props) {
     setGranularity("day");
     setMode("average");
     setSelectedSport("all");
-    setCustomStartDate(earliestDate);
-    setCustomEndDate(latestDate);
+    setCustomStartDate("");
+    setCustomEndDate("");
+    setShowDateFilter(false);
   }
 
   return (
@@ -635,6 +671,7 @@ export default function DashboardClient({ initialTab }: Props) {
                     <thead className="bg-slate-100 text-slate-800">
                       <tr>
                         <th className="px-3 py-2 text-left">Date</th>
+                        <th className="px-3 py-2 text-left">Total Sleep</th>
                         <th className="px-3 py-2 text-left">Sleep Quality</th>
                         <th className="px-3 py-2 text-left">REM</th>
                         <th className="px-3 py-2 text-left">Core</th>
@@ -648,6 +685,7 @@ export default function DashboardClient({ initialTab }: Props) {
                       {sleepDrilldownRows.map((row) => (
                         <tr key={String(row._id)} className="border-t border-slate-100">
                           <td className="px-3 py-2 font-medium">{toDisplayDate(row.date)}</td>
+                          <td className="px-3 py-2">{formatSleepDuration(row.sleep)}</td>
                           <td className="px-3 py-2">{sleepQualityLabel(row)}</td>
                           <td className="px-3 py-2">{Math.round(row.sleepDetail?.remMinutes ?? 0)}m</td>
                           <td className="px-3 py-2">{Math.round(row.sleepDetail?.coreMinutes ?? 0)}m</td>

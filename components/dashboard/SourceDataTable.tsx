@@ -21,6 +21,8 @@ interface ColumnFilter {
   value: string;
 }
 
+type MenuColumn = SortKey | "sourceType" | "workoutType" | "sportType";
+
 function asNumber(val: number | null | undefined): number | null {
   return val ?? null;
 }
@@ -60,6 +62,7 @@ export default function SourceDataTable({ entries, hideSourceFilter = false, tit
   const [sourceType, setSourceType] = useState<SourceTypeFilter>(hideSourceFilter ? "apple-health" : "all");
   const [activeFilter, setActiveFilter] = useState<ColumnFilter | null>(null);
   const [draftFilter, setDraftFilter] = useState<ColumnFilter>({ column: "steps", operator: "gt", value: "" });
+  const [menuColumn, setMenuColumn] = useState<MenuColumn | null>(null);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -123,6 +126,18 @@ export default function SourceDataTable({ entries, hideSourceFilter = false, tit
 
   function activateColumn(column: NumericFilterColumn) {
     setDraftFilter((prev) => ({ ...prev, column }));
+  }
+
+  function sortIndicator(column: SortKey): string {
+    if (sortKey !== column) return "";
+    return sortDir === "asc" ? " ▲" : " ▼";
+  }
+
+  function openMenu(column: MenuColumn) {
+    setMenuColumn((prev) => (prev === column ? null : column));
+    if (column === "steps" || column === "activeCalories" || column === "sleep" || column === "restingHeartRate" || column === "cardioFitness") {
+      activateColumn(column);
+    }
   }
 
   return (
@@ -204,6 +219,46 @@ export default function SourceDataTable({ entries, hideSourceFilter = false, tit
         </div>
       </div>
 
+      {menuColumn && (
+        <div className="mb-3 rounded-md border border-slate-200 bg-white p-3 text-xs text-slate-700">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="font-semibold text-slate-900">Filter/Sort: {menuColumn}</span>
+            <button type="button" className="rounded border border-slate-300 px-2 py-0.5" onClick={() => setMenuColumn(null)}>Close</button>
+          </div>
+          {(menuColumn === "date" || menuColumn === "steps" || menuColumn === "activeCalories" || menuColumn === "sleep" || menuColumn === "restingHeartRate" || menuColumn === "cardioFitness") && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => toggleSort(menuColumn as SortKey)} className="rounded border border-slate-300 px-2 py-1">
+                Toggle sort ({sortKey === menuColumn ? sortDir : "none"})
+              </button>
+              {(menuColumn !== "date") && (
+                <>
+                  <select
+                    aria-label="column operator"
+                    value={draftFilter.operator}
+                    onChange={(e) => setDraftFilter((prev) => ({ ...prev, operator: e.target.value as NumericFilterOperator }))}
+                    className="rounded border border-slate-300 px-2 py-1"
+                  >
+                    <option value="gt">greater than</option>
+                    <option value="lt">less than</option>
+                    <option value="eq">equal to</option>
+                  </select>
+                  <input
+                    aria-label="column value"
+                    value={draftFilter.value}
+                    onChange={(e) => setDraftFilter((prev) => ({ ...prev, value: e.target.value }))}
+                    placeholder="value"
+                    className="rounded border border-slate-300 px-2 py-1"
+                  />
+                  <button type="button" onClick={() => setActiveFilter({ ...draftFilter, column: menuColumn as NumericFilterColumn })} className="rounded bg-slate-900 px-2 py-1 text-white">
+                    Apply
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {activeFilter && activeFilter.value.trim() !== "" && (
         <div className="mb-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-700" data-testid="active-filter-summary">
           Filtering {activeFilter.column} {activeFilter.operator === "gt" ? ">" : activeFilter.operator === "lt" ? "<" : "="} {activeFilter.value}
@@ -217,28 +272,34 @@ export default function SourceDataTable({ entries, hideSourceFilter = false, tit
             <tr>
               <th className="px-3 py-2 text-left">
                 <button type="button" className="font-semibold" onClick={() => toggleSort("date")}>
-                  Date
+                  Date{sortIndicator("date")}
                 </button>
+                <button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openMenu("date")}>▾</button>
               </th>
-              <th className="px-3 py-2 text-left font-semibold">Source</th>
+              <th className="px-3 py-2 text-left font-semibold">Source <button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openMenu("sourceType")}>▾</button></th>
               <th className="px-3 py-2 text-left font-semibold">Imported At</th>
               <th className="px-3 py-2 text-left">
-                <button type="button" className="font-semibold" onClick={() => { toggleSort("steps"); activateColumn("steps"); }}>Steps</button>
+                <button type="button" className="font-semibold" onClick={() => { toggleSort("steps"); activateColumn("steps"); }}>Steps{sortIndicator("steps")}</button>
+                <button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openMenu("steps")}>▾</button>
               </th>
               <th className="px-3 py-2 text-left">
-                <button type="button" className="font-semibold" onClick={() => { toggleSort("activeCalories"); activateColumn("activeCalories"); }}>Calories</button>
+                <button type="button" className="font-semibold" onClick={() => { toggleSort("activeCalories"); activateColumn("activeCalories"); }}>Calories{sortIndicator("activeCalories")}</button>
+                <button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openMenu("activeCalories")}>▾</button>
               </th>
               <th className="px-3 py-2 text-left">
-                <button type="button" className="font-semibold" onClick={() => { toggleSort("sleep"); activateColumn("sleep"); }}>Sleep</button>
+                <button type="button" className="font-semibold" onClick={() => { toggleSort("sleep"); activateColumn("sleep"); }}>Sleep{sortIndicator("sleep")}</button>
+                <button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openMenu("sleep")}>▾</button>
               </th>
               <th className="px-3 py-2 text-left">
-                <button type="button" className="font-semibold" onClick={() => { toggleSort("restingHeartRate"); activateColumn("restingHeartRate"); }}>RHR</button>
+                <button type="button" className="font-semibold" onClick={() => { toggleSort("restingHeartRate"); activateColumn("restingHeartRate"); }}>RHR{sortIndicator("restingHeartRate")}</button>
+                <button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openMenu("restingHeartRate")}>▾</button>
               </th>
               <th className="px-3 py-2 text-left">
-                <button type="button" className="font-semibold" onClick={() => { toggleSort("cardioFitness"); activateColumn("cardioFitness"); }}>VO2</button>
+                <button type="button" className="font-semibold" onClick={() => { toggleSort("cardioFitness"); activateColumn("cardioFitness"); }}>VO2{sortIndicator("cardioFitness")}</button>
+                <button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openMenu("cardioFitness")}>▾</button>
               </th>
-              <th className="px-3 py-2 text-left font-semibold">Workout</th>
-              <th className="px-3 py-2 text-left font-semibold">Sport</th>
+              <th className="px-3 py-2 text-left font-semibold">Workout <button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openMenu("workoutType")}>▾</button></th>
+              <th className="px-3 py-2 text-left font-semibold">Sport <button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openMenu("sportType")}>▾</button></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white text-slate-900">

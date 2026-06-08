@@ -13,6 +13,13 @@ interface Props {
 
 type SessionSortKey = "date" | "duration" | "distance" | "pace" | "peakHr" | "calories";
 type SplitSortKey = "km" | "distance" | "pace" | "avgHr" | "maxHr";
+type SessionFilterColumn = "duration" | "distance" | "pace" | "peakHr" | "calories";
+type SessionFilterOperator = "contains" | "gt" | "lt" | "eq";
+
+function sortArrow(active: boolean, dir: "asc" | "desc"): string {
+  if (!active) return "";
+  return dir === "asc" ? " ▲" : " ▼";
+}
 
 function rollingAverage(values: number[], windowSize = 3): number[] {
   return values.map((_, idx) => {
@@ -88,6 +95,15 @@ function describeSession(session: SportSession, isRunning: boolean): string {
   return parts.length > 0 ? parts.join(" • ") : "No detailed metrics";
 }
 
+function describeSnowboardSession(session: SportSession): string {
+  const parts: string[] = [];
+  if (session.durationMinutes && session.durationMinutes > 0) parts.push(`${Math.round(session.durationMinutes)} min`);
+  if (session.distanceKm && session.distanceKm > 0) parts.push(`${session.distanceKm.toFixed(2)} km`);
+  if (session.avgSpeedKmh && session.avgSpeedKmh > 0) parts.push(`avg ${session.avgSpeedKmh.toFixed(1)} km/h`);
+  if (session.maxSpeedKmh && session.maxSpeedKmh > 0) parts.push(`max ${session.maxSpeedKmh.toFixed(1)} km/h`);
+  return parts.length > 0 ? parts.join(" • ") : "No segment details available";
+}
+
 function sanitizeDistanceKm(value: number | undefined): number | undefined {
   if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
   if (value > 80) return undefined;
@@ -114,6 +130,9 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
   const [splitFilter, setSplitFilter] = useState("");
   const [splitSortKey, setSplitSortKey] = useState<SplitSortKey>("km");
   const [splitSortDir, setSplitSortDir] = useState<"asc" | "desc">("asc");
+  const [sessionMenuColumn, setSessionMenuColumn] = useState<SessionFilterColumn | null>(null);
+  const [sessionFilter, setSessionFilter] = useState<{ column: SessionFilterColumn; operator: SessionFilterOperator; value: string } | null>(null);
+  const [sessionFilterDraft, setSessionFilterDraft] = useState<{ operator: SessionFilterOperator; value: string }>({ operator: "contains", value: "" });
 
   const isRunning = sport.toLowerCase() === "running";
   const isSnowboarding = sport.toLowerCase() === "snowboarding";
@@ -137,8 +156,6 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
 
   const filteredSessions = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return normalizedSessions;
-
     return normalizedSessions.filter((s) => {
       const haystack = [
         s.date,
@@ -152,9 +169,33 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
         describeSession(s, isRunning),
       ].join(" ").toLowerCase();
 
-      return haystack.includes(q);
+      if (q && !haystack.includes(q)) {
+        return false;
+      }
+
+      if (sessionFilter && sessionFilter.value.trim() !== "") {
+        const filterValue = sessionFilter.value.trim().toLowerCase();
+        const numericValue = Number(filterValue);
+        const sourceValue =
+          sessionFilter.column === "duration" ? (s.durationMinutes ?? null)
+          : sessionFilter.column === "distance" ? (s.distanceKm ?? null)
+          : sessionFilter.column === "pace" ? (s.paceMinPerKm ?? null)
+          : sessionFilter.column === "peakHr" ? (s.peakHeartRate ?? null)
+          : (s.calories ?? null);
+
+        if (sessionFilter.operator === "contains") {
+          if (!String(sourceValue ?? "").toLowerCase().includes(filterValue)) return false;
+        } else {
+          if (!Number.isFinite(numericValue) || sourceValue === null) return false;
+          if (sessionFilter.operator === "gt" && !(sourceValue > numericValue)) return false;
+          if (sessionFilter.operator === "lt" && !(sourceValue < numericValue)) return false;
+          if (sessionFilter.operator === "eq" && !(sourceValue === numericValue)) return false;
+        }
+      }
+
+      return true;
     });
-  }, [normalizedSessions, query, isRunning]);
+  }, [normalizedSessions, query, isRunning, sessionFilter]);
 
   const sorted = useMemo(() => {
     const list = [...filteredSessions];
@@ -214,9 +255,13 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
   const pacePoints: MetricPoint[] = sessionsWithPace.map((s) => ({ label: s.date, value: Math.round((s.paceMinPerKm ?? 0) * 100) / 100 }));
 
   const peakAgg = aggregateSeries(peakPoints, granularity, mode);
-  const distanceAgg = aggregateSeries(distancePoints, granularity, "total");
+  const distanceAgg = aggregateSeries(distancePoints, granularity, mode);
   const paceAgg = aggregateSeries(pacePoints, granularity, mode);
   const trendAgg = aggregateSeries(trendPoints, granularity, mode);
+  const speedPoints: MetricPoint[] = filteredSessions
+    .filter((s) => s.avgSpeedKmh && s.avgSpeedKmh > 0)
+    .map((s) => ({ label: s.date, value: Math.round((s.avgSpeedKmh ?? 0) * 100) / 100 }));
+  const speedAgg = aggregateSeries(speedPoints, granularity, mode);
 
   const hasRunningMetrics = isRunning && filteredSessions.some(
     (s) => s.avgStrideLengthM || s.avgGroundContactMs || s.avgRunningPowerW
@@ -255,6 +300,11 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
     }
     setSplitSortKey(next);
     setSplitSortDir("asc");
+  }
+
+  function openSessionMenu(column: SessionFilterColumn) {
+    setSessionMenuColumn((prev) => (prev === column ? null : column));
+    setSessionFilterDraft({ operator: "contains", value: "" });
   }
 
   return (
@@ -362,13 +412,15 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
       )}
 
       <div className="mt-5 grid gap-4 lg:grid-cols-2">
-        {isRunning && distancePoints.length > 0 ? (
-          <MetricChart title="Distance per Run" tooltipKey="runningPeak" data={distanceAgg} unit="km" variant="bar" />
+        {(isRunning || isSnowboarding) && distancePoints.length > 0 ? (
+          <MetricChart title={isSnowboarding ? "Distance per Session" : "Distance per Run"} tooltipKey="runningPeak" data={distanceAgg} unit="km" variant="bar" />
         ) : (
           <MetricChart title={`${sport} Peak HR`} tooltipKey="padelPeak" data={peakAgg} unit="bpm" variant="bar" />
         )}
         {isRunning && pacePoints.length > 0 ? (
           <MetricChart title="Pace per Run (min/km)" tooltipKey="runningPeak" data={paceAgg} unit="min/km" variant="line" />
+        ) : isSnowboarding && speedAgg.length > 0 ? (
+          <MetricChart title="Speed per Session" tooltipKey="runningPeak" data={speedAgg} unit="km/h" variant="line" />
         ) : (
           <MetricChart title={`${sport} Peak Trend`} tooltipKey="padelPeak" data={trendAgg} unit="bpm" variant="line" />
         )}
@@ -448,26 +500,69 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
 
       {filteredSessions.length > 0 && (
         <div className="mt-6">
+          <h4 className="mb-2 text-sm font-semibold text-slate-900">Workout Imported Data</h4>
+          {sessionMenuColumn && (
+            <div className="mb-3 rounded border border-slate-200 bg-white p-2 text-xs text-slate-700">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-semibold text-slate-900">Filter column: {sessionMenuColumn}</span>
+                <button type="button" className="rounded border border-slate-300 px-2 py-0.5" onClick={() => setSessionMenuColumn(null)}>Close</button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={sessionFilterDraft.operator}
+                  onChange={(e) => setSessionFilterDraft((prev) => ({ ...prev, operator: e.target.value as SessionFilterOperator }))}
+                  className="rounded border border-slate-300 px-2 py-1"
+                >
+                  <option value="contains">contains</option>
+                  <option value="gt">greater than</option>
+                  <option value="lt">less than</option>
+                  <option value="eq">equal to</option>
+                </select>
+                <input
+                  value={sessionFilterDraft.value}
+                  onChange={(e) => setSessionFilterDraft((prev) => ({ ...prev, value: e.target.value }))}
+                  placeholder="value"
+                  className="rounded border border-slate-300 px-2 py-1"
+                />
+                <button
+                  type="button"
+                  className="rounded bg-slate-900 px-2 py-1 text-white"
+                  onClick={() => setSessionFilter({ column: sessionMenuColumn, operator: sessionFilterDraft.operator, value: sessionFilterDraft.value })}
+                >
+                  Apply
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-slate-300 px-2 py-1"
+                  onClick={() => setSessionFilter(null)}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
           <div className="overflow-x-auto rounded-lg border border-slate-200">
             <table className="min-w-full text-sm text-slate-900" data-testid="sport-session-log">
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-700">
                 <tr>
-                  <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("date")}>Date</button></th>
+                  <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("date")}>Date{sortArrow(sortKey === "date", sortDir)}</button></th>
                   <th className="px-3 py-2 text-left font-semibold">Day</th>
                   <th className="px-3 py-2 text-left font-semibold">Time</th>
-                  <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("duration")}>Duration</button></th>
-                  {isRunning && <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("distance")}>Distance</button></th>}
-                  {isRunning && <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("pace")}>Pace</button></th>}
-                  <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("peakHr")}>HR avg/peak</button></th>
-                  <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("calories")}>Calories</button></th>
+                  <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("duration")}>Duration{sortArrow(sortKey === "duration", sortDir)}</button><button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openSessionMenu("duration")}>▾</button></th>
+                  {isRunning && <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("distance")}>Distance{sortArrow(sortKey === "distance", sortDir)}</button><button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openSessionMenu("distance")}>▾</button></th>}
+                  {isRunning && <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("pace")}>Pace{sortArrow(sortKey === "pace", sortDir)}</button><button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openSessionMenu("pace")}>▾</button></th>}
+                  <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("peakHr")}>Avg HR{sortArrow(sortKey === "peakHr", sortDir)}</button><button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openSessionMenu("peakHr")}>▾</button></th>
+                  <th className="px-3 py-2 text-left font-semibold">Max HR</th>
+                  <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("calories")}>Calories{sortArrow(sortKey === "calories", sortDir)}</button><button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openSessionMenu("calories")}>▾</button></th>
                   <th className="px-3 py-2 text-left font-semibold">Session Summary</th>
+                  {isRunning && <th className="px-3 py-2 text-left font-semibold">Run</th>}
                   {hasRunningMetrics && <th className="px-3 py-2 text-left">Stride</th>}
                   {hasRunningMetrics && <th className="px-3 py-2 text-left">Ground Contact</th>}
                   {hasRunningMetrics && <th className="px-3 py-2 text-left">Power</th>}
                   {hasRunningMetrics && <th className="px-3 py-2 text-left">Elevation</th>}
                 </tr>
                 <tr>
-                  <th colSpan={hasRunningMetrics ? (isRunning ? 13 : 11) : (isRunning ? 9 : 8)} className="px-3 py-2 text-left normal-case">
+                  <th colSpan={hasRunningMetrics ? (isRunning ? 15 : 11) : (isRunning ? 11 : 8)} className="px-3 py-2 text-left normal-case">
                     <input
                       type="text"
                       value={query}
@@ -493,11 +588,25 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
                     )}
                     <td className="px-3 py-2">
                       {s.avgHeartRate ? `${Math.round(s.avgHeartRate)}` : "-"}
-                      {s.peakHeartRate > 0 ? ` / ${s.peakHeartRate}` : ""}{" "}
-                      <span className="text-xs text-slate-500">bpm</span>
+                      <span className="text-xs text-slate-500"> bpm</span>
                     </td>
+                    <td className="px-3 py-2">{s.peakHeartRate > 0 ? s.peakHeartRate : "-"}</td>
                     <td className="px-3 py-2">{s.calories > 0 ? Math.round(s.calories) : "-"}</td>
-                    <td className="px-3 py-2 text-xs text-slate-700">{describeSession(s, isRunning)}</td>
+                    <td className="px-3 py-2 text-xs text-slate-700">{isSnowboarding ? describeSnowboardSession(s) : describeSession(s, isRunning)}</td>
+                    {isRunning && (
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedRunKey(`${s.date}-${s.startTime ?? ""}`);
+                            setShowRunDrilldown(true);
+                          }}
+                          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+                        >
+                          Drill down
+                        </button>
+                      </td>
+                    )}
                     {hasRunningMetrics && (
                       <td className="px-3 py-2"><StatCell value={s.avgStrideLengthM ? s.avgStrideLengthM * 100 : undefined} suffix=" cm" /></td>
                     )}

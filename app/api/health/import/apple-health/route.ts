@@ -99,24 +99,6 @@ function toHealthEntries(byDate: Map<string, DailyAccumulator>): HealthEntryInpu
   }));
 }
 
-function getIsraelWeekday(date: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "short",
-    timeZone: "Asia/Jerusalem",
-  }).format(date);
-}
-
-function getIsraelOffsetHours(date: Date): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Jerusalem",
-    timeZoneName: "shortOffset",
-  }).formatToParts(date);
-  const offsetLabel = parts.find((p) => p.type === "timeZoneName")?.value ?? "GMT+2";
-  const match = offsetLabel.match(/GMT([+-]\d{1,2})/i);
-  if (!match) return 2;
-  return Number.parseInt(match[1], 10);
-}
-
 function stageFromSleepValue(value: string): "rem" | "core" | "deep" | "awake" | "asleep" | "inbed" | null {
   const v = value.toLowerCase();
   if (v.includes("asleeprem") || v.includes("rem")) return "rem";
@@ -170,49 +152,8 @@ function appendSleepInterval(map: Map<string, SleepInterval[]>, start: Date, end
   }
 }
 
-function applySyntheticShabbatAugmentation(byDate: Map<string, DailyAccumulator>) {
-  if (byDate.size === 0) return;
-
-  const allDates = [...byDate.values()]
-    .map((entry) => entry.date)
-    .sort((a, b) => a.getTime() - b.getTime());
-
-  const start = new Date(allDates[0]);
-  const end = new Date(allDates[allDates.length - 1]);
-
-  for (let cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
-    const dateKey = toDateKey(cursor);
-    if (!byDate.has(dateKey)) {
-      byDate.set(dateKey, initAccumulator(dateKey));
-    }
-  }
-
-  for (const [dateKey, entry] of byDate.entries()) {
-    const weekday = getIsraelWeekday(entry.date);
-    if (weekday === "Fri") {
-      const dstHours = getIsraelOffsetHours(entry.date);
-      const extraSleep = dstHours >= 3 ? 9 * 60 : 8 * 60;
-      const extraSteps = 900;
-      entry.sleepMinutes = (entry.sleepMinutes ?? 0) + extraSleep;
-      entry.steps = (entry.steps ?? 0) + extraSteps;
-      entry.syntheticAdjustments.shabbatSleepAddedMinutes += extraSleep;
-      entry.syntheticAdjustments.shabbatStepsAdded += extraSteps;
-      entry.sleepDetail.asleepMinutes += extraSleep;
-      byDate.set(dateKey, entry);
-      continue;
-    }
-
-    if (weekday === "Sat") {
-      const extraSleep = 120;
-      const extraSteps = 2700;
-      entry.sleepMinutes = (entry.sleepMinutes ?? 0) + extraSleep;
-      entry.steps = (entry.steps ?? 0) + extraSteps;
-      entry.syntheticAdjustments.shabbatSleepAddedMinutes += extraSleep;
-      entry.syntheticAdjustments.shabbatStepsAdded += extraSteps;
-      entry.sleepDetail.asleepMinutes += extraSleep;
-      byDate.set(dateKey, entry);
-    }
-  }
+function applySyntheticShabbatAugmentation() {
+  // Disabled intentionally: dashboard should only reflect imported measurements.
 }
 
 function buildKmSplits(distanceKm: number | null, durationMinutes: number | null, avgHeartRate: number | null, maxHeartRate: number | null) {
@@ -226,32 +167,18 @@ function buildKmSplits(distanceKm: number | null, durationMinutes: number | null
     }>;
   }
 
-  const fullKm = Math.floor(distanceKm);
-  const remainder = distanceKm - fullKm;
-  const totalSplits = remainder > 0.05 ? fullKm + 1 : fullKm;
-  const basePace = durationMinutes / distanceKm;
-
-  const splits = [] as Array<{
+  // No true per-km splits exist in the source export. Avoid generating synthetic rows.
+  void distanceKm;
+  void durationMinutes;
+  void avgHeartRate;
+  void maxHeartRate;
+  return [] as Array<{
     kmIndex: number;
     distanceKm: number;
     paceMinPerKm: number | null;
     avgHeartRate: number | null;
     maxHeartRate: number | null;
   }>;
-
-  for (let i = 1; i <= totalSplits; i++) {
-    const splitDistance = i === totalSplits && remainder > 0.05 ? remainder : 1;
-    const variation = ((i % 2 === 0 ? 1 : -1) * 0.02) + (i * 0.002);
-    splits.push({
-      kmIndex: i,
-      distanceKm: Math.round(splitDistance * 100) / 100,
-      paceMinPerKm: Math.round(basePace * (1 + variation) * 100) / 100,
-      avgHeartRate,
-      maxHeartRate,
-    });
-  }
-
-  return splits;
 }
 
 function bytesToHuman(bytes: number): string {
@@ -599,7 +526,7 @@ export async function POST(request: NextRequest) {
       byDate.set(dateKey, entry);
     }
 
-    applySyntheticShabbatAugmentation(byDate);
+    applySyntheticShabbatAugmentation();
 
     const gpxEntries = files.filter((item) => item.name.toLowerCase().includes("workout-routes/") && item.name.toLowerCase().endsWith(".gpx"));
     const routes = [];
