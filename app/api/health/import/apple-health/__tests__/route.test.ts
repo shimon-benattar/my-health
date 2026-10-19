@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import JSZip from "jszip";
+import { connectDB } from "@/lib/db";
+import { writeDashboardMetricsCacheToDisk } from "@/lib/dashboardMetricsCache";
 
 vi.mock("@/lib/db", () => ({ connectDB: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@/lib/dashboardMetricsCache", () => ({ writeDashboardMetricsCacheToDisk: vi.fn().mockResolvedValue(undefined) }));
 
 const mockGetBlob = vi.fn();
 const mockDeleteBlob = vi.fn();
@@ -57,6 +60,16 @@ vi.mock("@/lib/models/AppleHealthWorkout", () => ({
 vi.mock("@/lib/models/ImportArchive", () => ({
   default: { insertMany: mockArchiveInsertMany },
 }));
+const mockFindOneAndUpdateProfile = vi.fn().mockResolvedValue({
+  key: "primary",
+  name: "Shimon",
+  birthdate: "21/04/1979",
+  weightKg: 85,
+  heightCm: 177,
+});
+vi.mock("@/lib/models/UserProfile", () => ({
+  default: { findOneAndUpdate: mockFindOneAndUpdateProfile },
+}));
 
 const mockParseAppleHealthXmlStream = vi.fn();
 const mockParseGpxRoute = vi.fn();
@@ -67,6 +80,8 @@ vi.mock("@/lib/parsers/gpxRouteParser", () => ({ parseGpxRoute: mockParseGpxRout
 vi.mock("@/lib/parsers/workoutRouteCorrelation", () => ({ correlateWorkoutsToRoutes: mockCorrelate }));
 
 const { POST } = await import("@/app/api/health/import/apple-health/route");
+const mockConnectDB = vi.mocked(connectDB);
+const mockWriteDashboardMetricsCacheToDisk = vi.mocked(writeDashboardMetricsCacheToDisk);
 
 async function makeZipRequest(files: Array<{ name: string; content: string }>, filename = "apple.zip") {
   const zip = new JSZip();
@@ -100,6 +115,7 @@ function makeJsonBlobRequest(blobUrl: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockConnectDB.mockResolvedValue(undefined);
   mockCreate.mockResolvedValue(undefined);
   mockUpdateOne.mockResolvedValue({ acknowledged: true });
   mockBulkWrite.mockResolvedValue({ upsertedCount: 1, modifiedCount: 0 });
@@ -115,6 +131,14 @@ beforeEach(() => {
   mockGetBlob.mockReset();
   mockDeleteBlob.mockReset();
   mockDeleteBlob.mockResolvedValue(undefined);
+  mockFindOneAndUpdateProfile.mockResolvedValue({
+    key: "primary",
+    name: "Shimon",
+    birthdate: "21/04/1979",
+    weightKg: 85,
+    heightCm: 177,
+  });
+  mockWriteDashboardMetricsCacheToDisk.mockResolvedValue(undefined);
   mockImportCreate.mockResolvedValue(undefined);
   mockImportUpdateOne.mockResolvedValue({ acknowledged: true });
   mockWorkoutUpdateOne.mockResolvedValue({ acknowledged: true });
@@ -141,6 +165,8 @@ beforeEach(() => {
       totalDistance: 5,
       sourceName: "Watch",
       sourceVersion: "10",
+      events: [],
+      stats: {},
     });
 
     return {
@@ -231,6 +257,158 @@ describe("POST /api/health/import/apple-health", () => {
     expect(mockArchiveInsertMany).not.toHaveBeenCalled();
   });
 
+  it("aggregates recovery metrics and persists workout effort, cadence, and splits", async () => {
+    mockParseAppleHealthXmlStream.mockImplementationOnce(async (_stream: unknown, handlers: { onRecord?: (record: Record<string, unknown>) => void; onWorkout?: (workout: Record<string, unknown>) => void }) => {
+      handlers.onRecord?.({
+        type: "HKQuantityTypeIdentifierRespiratoryRate",
+        value: "14.5",
+        unit: "count/min",
+        sourceName: "Watch",
+        sourceVersion: "12",
+        startDate: new Date("2026-10-10T04:00:00.000Z"),
+        endDate: new Date("2026-10-10T04:00:00.000Z"),
+      });
+      handlers.onRecord?.({
+        type: "HKQuantityTypeIdentifierHeartRateVariabilityRMSSD",
+        value: "41",
+        unit: "ms",
+        sourceName: "Watch",
+        sourceVersion: "12",
+        startDate: new Date("2026-10-10T04:05:00.000Z"),
+        endDate: new Date("2026-10-10T04:05:00.000Z"),
+      });
+      handlers.onRecord?.({
+        type: "HKQuantityTypeIdentifierAppleSleepingWristTemperature",
+        value: "35.6",
+        unit: "degC",
+        sourceName: "Watch",
+        sourceVersion: "12",
+        startDate: new Date("2026-10-10T00:00:00.000Z"),
+        endDate: new Date("2026-10-10T07:00:00.000Z"),
+      });
+      handlers.onRecord?.({
+        type: "HKQuantityTypeIdentifierTimeInDaylight",
+        value: "24",
+        unit: "min",
+        sourceName: "Watch",
+        sourceVersion: "12",
+        startDate: new Date("2026-10-10T08:00:00.000Z"),
+        endDate: new Date("2026-10-10T08:24:00.000Z"),
+      });
+      handlers.onRecord?.({
+        type: "HKQuantityTypeIdentifierWorkoutEffortScore",
+        value: "8",
+        unit: "appleEffortScore",
+        sourceName: "Watch",
+        sourceVersion: "12",
+        startDate: new Date("2026-10-10T08:29:00.000Z"),
+        endDate: new Date("2026-10-10T08:29:00.000Z"),
+      });
+      handlers.onRecord?.({
+        type: "HKQuantityTypeIdentifierHeartRateRecoveryOneMinute",
+        value: "31",
+        unit: "count/min",
+        sourceName: "Watch",
+        sourceVersion: "12",
+        startDate: new Date("2026-10-10T08:31:00.000Z"),
+        endDate: new Date("2026-10-10T08:31:00.000Z"),
+      });
+      handlers.onRecord?.({
+        type: "HKQuantityTypeIdentifierHeartRate",
+        value: "150",
+        unit: "count/min",
+        sourceName: "Watch",
+        sourceVersion: "12",
+        startDate: new Date("2026-10-10T08:00:00.000Z"),
+        endDate: new Date("2026-10-10T08:01:00.000Z"),
+      });
+
+      handlers.onWorkout?.({
+        workoutActivityType: "HKWorkoutActivityTypeRunning",
+        startDate: new Date("2026-10-10T08:00:00.000Z"),
+        endDate: new Date("2026-10-10T08:30:00.000Z"),
+        durationMinutes: 30,
+        totalEnergyBurned: 300,
+        totalDistance: 5,
+        sourceName: "Watch",
+        sourceVersion: "12",
+        events: [
+          { type: "HKWorkoutEventTypeSegment", date: new Date("2026-10-10T08:00:00.000Z"), durationMinutes: 5.5 },
+          { type: "HKWorkoutEventTypeSegment", date: new Date("2026-10-10T08:05:30.000Z"), durationMinutes: 5.8 },
+        ],
+        stats: {
+          runningSpeedKmh: { avg: 10.5, min: 9.2, max: 12.1, sum: null },
+          runningStrideM: { avg: 1.05, min: 0.98, max: 1.12, sum: null },
+          stepCount: 5100,
+          heartRate: { avg: 155, min: 140, max: 172, sum: null },
+        },
+      });
+
+      return {
+        recordsProcessed: 7,
+        workoutsProcessed: 1,
+        skippedRecords: 0,
+        skippedWorkouts: 0,
+        recordTypeCounts: {},
+        workoutTypeCounts: { HKWorkoutActivityTypeRunning: 1 },
+      };
+    });
+    mockCorrelate.mockReturnValueOnce([
+      {
+        workout: {
+          workoutActivityType: "HKWorkoutActivityTypeRunning",
+          startDate: new Date("2026-10-10T08:00:00.000Z"),
+          endDate: new Date("2026-10-10T08:30:00.000Z"),
+          durationMinutes: 30,
+          totalEnergyBurned: 300,
+          totalDistance: 5,
+          sourceName: "Watch",
+          sourceVersion: "12",
+          events: [
+            { type: "HKWorkoutEventTypeSegment", date: new Date("2026-10-10T08:00:00.000Z"), durationMinutes: 5.5 },
+            { type: "HKWorkoutEventTypeSegment", date: new Date("2026-10-10T08:05:30.000Z"), durationMinutes: 5.8 },
+          ],
+          stats: {
+            runningSpeedKmh: { avg: 10.5, min: 9.2, max: 12.1, sum: null },
+            runningStrideM: { avg: 1.05, min: 0.98, max: 1.12, sum: null },
+            stepCount: 5100,
+            heartRate: { avg: 155, min: 140, max: 172, sum: null },
+          },
+        },
+        route: null,
+        matched: false,
+        confidence: 0,
+        matchReason: "No route available",
+      },
+    ]);
+
+    const req = await makeZipRequest([{ name: "export.xml", content: "<HealthData />" }]);
+    const res = await POST(req);
+
+    expect(res.status).toBe(200);
+
+    const insertedEntries = mockInsertManyEntries.mock.calls.at(-1)?.[0] as Array<{
+      recoveryMetrics?: { respiratoryRate?: { avg?: number | null } | null; hrvRmssd?: { avg?: number | null } | null; sleepingWristTemperature?: number | null };
+      vitalityMetrics?: { timeInDaylightMinutes?: number | null };
+    }>;
+    expect(insertedEntries[0]?.recoveryMetrics?.respiratoryRate?.avg).toBe(14.5);
+    expect(insertedEntries[0]?.recoveryMetrics?.hrvRmssd?.avg).toBe(41);
+    expect(insertedEntries[0]?.recoveryMetrics?.sleepingWristTemperature).toBe(35.6);
+    expect(insertedEntries[0]?.vitalityMetrics?.timeInDaylightMinutes).toBe(24);
+
+    const insertedWorkouts = mockInsertManyWorkouts.mock.calls.at(-1)?.[0] as Array<{
+      effort?: { workoutEffortScore?: number | null };
+      recovery?: { heartRateRecoveryOneMinute?: number | null };
+      splits?: Array<{ kilometer: number; durationSeconds: number }>;
+      stats?: { runningCadenceSpm?: { avg?: number | null } | null };
+    }>;
+    expect(insertedWorkouts[0]?.effort?.workoutEffortScore).toBe(8);
+    expect(insertedWorkouts[0]?.recovery?.heartRateRecoveryOneMinute).toBe(31);
+    expect(insertedWorkouts[0]?.splits).toHaveLength(2);
+    expect(insertedWorkouts[0]?.splits?.[0]).toMatchObject({ kilometer: 1, durationSeconds: 330 });
+    expect(insertedWorkouts[0]?.stats?.runningCadenceSpm?.avg).toBeGreaterThan(0);
+  });
+
   it("imports via blob URL by falling back to pathname when direct URL lookup returns 404", async () => {
     const zip = new JSZip();
     zip.file("export.xml", "<HealthData />");
@@ -276,5 +454,91 @@ describe("POST /api/health/import/apple-health", () => {
     expect(res.status).toBe(502);
     const body = await res.json();
     expect(body.error).toMatch(/failed to fetch blob from storage/i);
+  });
+
+  it("groups overnight sleep and same-day naps into the wake day and counts only sleeping HR samples", async () => {
+    mockParseAppleHealthXmlStream.mockImplementationOnce(async (_stream: unknown, handlers: { onRecord?: (record: Record<string, unknown>) => void }) => {
+      handlers.onRecord?.({
+        type: "HKCategoryTypeIdentifierSleepAnalysis",
+        value: "HKCategoryValueSleepAnalysisAsleep",
+        unit: null,
+        sourceName: "Watch",
+        sourceVersion: "10",
+        startDate: new Date("2026-06-01T22:00:00.000Z"),
+        endDate: new Date("2026-06-02T06:00:00.000Z"),
+      });
+      handlers.onRecord?.({
+        type: "HKCategoryTypeIdentifierSleepAnalysis",
+        value: "HKCategoryValueSleepAnalysisAsleep",
+        unit: null,
+        sourceName: "Watch",
+        sourceVersion: "10",
+        startDate: new Date("2026-06-02T13:00:00.000Z"),
+        endDate: new Date("2026-06-02T14:00:00.000Z"),
+      });
+      handlers.onRecord?.({
+        type: "HKQuantityTypeIdentifierHeartRate",
+        value: "38",
+        unit: "count/min",
+        sourceName: "Watch",
+        sourceVersion: "10",
+        startDate: new Date("2026-06-02T01:30:00.000Z"),
+        endDate: new Date("2026-06-02T01:31:00.000Z"),
+      });
+      handlers.onRecord?.({
+        type: "HKQuantityTypeIdentifierHeartRate",
+        value: "72",
+        unit: "count/min",
+        sourceName: "Watch",
+        sourceVersion: "10",
+        startDate: new Date("2026-06-02T18:00:00.000Z"),
+        endDate: new Date("2026-06-02T18:01:00.000Z"),
+      });
+
+      return {
+        recordsProcessed: 4,
+        workoutsProcessed: 0,
+        skippedRecords: 0,
+        skippedWorkouts: 0,
+        recordTypeCounts: {
+          HKCategoryTypeIdentifierSleepAnalysis: 2,
+          HKQuantityTypeIdentifierHeartRate: 2,
+        },
+        workoutTypeCounts: {},
+      };
+    });
+    mockCorrelate.mockReturnValueOnce([]);
+
+    const req = await makeZipRequest([{ name: "export.xml", content: "<HealthData />" }]);
+    const res = await POST(req);
+
+    expect(res.status).toBe(200);
+    expect(mockInsertManyEntries).toHaveBeenCalledTimes(1);
+
+    const insertedEntries = mockInsertManyEntries.mock.calls[0]?.[0] as Array<{
+      date: Date;
+      sleep: number | null;
+      sleepHeartRate?: { avg: number | null; min: number | null; max: number | null; lowAlerts: number } | null;
+    }>;
+
+    expect(insertedEntries).toHaveLength(1);
+    expect(insertedEntries[0].date.toISOString()).toBe("2026-06-02T00:00:00.000Z");
+    expect(insertedEntries[0].sleep).toBe(540);
+    expect(insertedEntries[0].sleepHeartRate).toMatchObject({
+      avg: 38,
+      min: 38,
+      max: 38,
+      lowAlerts: 1,
+    });
+  });
+
+  it("returns 503 with database_unavailable when MongoDB cannot be reached", async () => {
+    mockConnectDB.mockRejectedValueOnce(new Error("Socket 'secureConnect' timed out after 30000ms (connectTimeoutMS: 30000)"));
+    const req = await makeZipRequest([{ name: "export.xml", content: "<HealthData />" }]);
+    const res = await POST(req);
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.code).toBe("database_unavailable");
+    expect(body.error).toMatch(/database is unavailable/i);
   });
 });

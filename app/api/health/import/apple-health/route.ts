@@ -2,17 +2,41 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { del, get as getBlob } from "@vercel/blob";
 import JSZip from "jszip";
+import { databaseUnavailablePayload, isDatabaseUnavailableError } from "@/lib/apiErrors";
 import { connectDB } from "@/lib/db";
+import { writeDashboardMetricsCacheToDisk } from "@/lib/dashboardMetricsCache";
+import { buildDashboardMetricsPayload } from "@/lib/dashboardMetricsPayload";
 import HealthEntry from "@/lib/models/HealthEntry";
 import ImportLog from "@/lib/models/ImportLog";
 import AppleHealthWorkout from "@/lib/models/AppleHealthWorkout";
 import ImportArchive from "@/lib/models/ImportArchive";
+import UserProfile from "@/lib/models/UserProfile";
 import { parseAppleHealthXmlStream, type AppleHealthWorkout as AppleHealthWorkoutRecord } from "@/lib/parsers/appleHealthXmlParser";
 import { parseGpxRoute } from "@/lib/parsers/gpxRouteParser";
 import { correlateWorkoutsToRoutes } from "@/lib/parsers/workoutRouteCorrelation";
-import type { HealthEntryInput, AppleHealthImportResult } from "@/types/health";
+import type { AverageRangeValue, DashboardWorkoutDoc, HealthEntryDoc, HealthEntryInput, AppleHealthImportResult, UserProfile as DashboardUserProfile, WorkoutSplit } from "@/types/health";
 
 const ARCHIVE_TTL_DAYS = 30;
+
+function normalizeProfile(profile: {
+  key?: string;
+  name: string;
+  birthdate: string;
+  weightKg: number;
+  heightCm: number;
+  imageUrl?: string | null;
+  sex?: "female" | "male" | "other" | null;
+  timezone?: string | null;
+  notes?: string | null;
+  updatedAt?: Date | string;
+} | null): DashboardUserProfile | null {
+  if (!profile) return null;
+
+  return {
+    ...profile,
+    updatedAt: profile.updatedAt instanceof Date ? profile.updatedAt.toISOString() : profile.updatedAt,
+  };
+}
 
 async function waitMs(ms: number) {
   if (process.env.NODE_ENV === "test") {
@@ -40,6 +64,13 @@ type DailyAccumulator = {
   heartRateMax: number | null;
   hrvMin: number | null;
   hrvMax: number | null;
+  respiratoryRateSamples: number[];
+  hrvRmssdSamples: number[];
+  walkingHeartRateAverageSamples: number[];
+  sleepingWristTemperatureSamples: number[];
+  heartRateRecoverySamples: number[];
+  physicalEffortSamples: number[];
+  timeInDaylightMinutes: number | null;
   sleepMinutes: number | null;
   sleepDetail: {
     remMinutes: number;
@@ -65,6 +96,37 @@ type SleepInterval = {
   start: Date;
   end: Date;
 };
+
+type HeartRateSample = {
+  start: Date;
+  end: Date;
+  value: number;
+};
+
+type TimedNumericRecord = {
+  start: Date;
+  end: Date;
+  value: number;
+};
+
+type DetailedWorkoutSplit = WorkoutSplit & {
+  maxHeartRate?: number | null;
+};
+
+function averageOrNull(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return total / values.length;
+}
+
+function toAverageRange(values: number[]): AverageRangeValue | null {
+  if (values.length === 0) return null;
+  return {
+    avg: averageOrNull(values),
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
+}
 
 function toHealthEntries(byDate: Map<string, DailyAccumulator>): HealthEntryInput[] {
   return Array.from(byDate.values()).map((entry) => ({
@@ -95,6 +157,18 @@ function toHealthEntries(byDate: Map<string, DailyAccumulator>): HealthEntryInpu
     steps: entry.steps,
     sleepDetail: entry.sleepDetail,
     sleepHeartRate: entry.sleepHeartRate,
+    recoveryMetrics: {
+      respiratoryRate: toAverageRange(entry.respiratoryRateSamples),
+      hrvRmssd: toAverageRange(entry.hrvRmssdSamples),
+      walkingHeartRateAverage: averageOrNull(entry.walkingHeartRateAverageSamples),
+      sleepingWristTemperature: averageOrNull(entry.sleepingWristTemperatureSamples),
+      heartRateRecoveryOneMinute: averageOrNull(entry.heartRateRecoverySamples),
+    },
+    vitalityMetrics: {
+      timeInDaylightMinutes: entry.timeInDaylightMinutes,
+      physicalEffortAvg: averageOrNull(entry.physicalEffortSamples),
+      physicalEffortMax: entry.physicalEffortSamples.length > 0 ? Math.max(...entry.physicalEffortSamples) : null,
+    },
     syntheticAdjustments: entry.syntheticAdjustments,
   }));
 }
@@ -121,6 +195,13 @@ function initAccumulator(dateKey: string): DailyAccumulator {
     heartRateMax: null,
     hrvMin: null,
     hrvMax: null,
+    respiratoryRateSamples: [],
+    hrvRmssdSamples: [],
+    walkingHeartRateAverageSamples: [],
+    sleepingWristTemperatureSamples: [],
+    heartRateRecoverySamples: [],
+    physicalEffortSamples: [],
+    timeInDaylightMinutes: null,
     sleepMinutes: null,
     sleepDetail: {
       remMinutes: 0,
@@ -143,42 +224,122 @@ function initAccumulator(dateKey: string): DailyAccumulator {
   };
 }
 
-function appendSleepInterval(map: Map<string, SleepInterval[]>, start: Date, end: Date) {
-  const keys = new Set([toDateKey(start), toDateKey(end)]);
+function appendSleepInterval(map: Map<string, SleepInterval[]>, dateKey: string, start: Date, end: Date) {
+  const list = map.get(dateKey) ?? [];
+  list.push({ start, end });
+  map.set(dateKey, list);
+}
+
+function appendHeartRateSample(map: Map<string, HeartRateSample[]>, sample: HeartRateSample) {
+  const keys = new Set([toDateKey(sample.start), toDateKey(sample.end)]);
   for (const key of keys) {
     const list = map.get(key) ?? [];
-    list.push({ start, end });
+    list.push(sample);
     map.set(key, list);
   }
+}
+
+function overlapsSleep(sample: HeartRateSample, interval: SleepInterval): boolean {
+  return sample.start < interval.end && sample.end > interval.start;
 }
 
 function applySyntheticShabbatAugmentation() {
   // Disabled intentionally: dashboard should only reflect imported measurements.
 }
 
-function buildKmSplits(distanceKm: number | null, durationMinutes: number | null, avgHeartRate: number | null, maxHeartRate: number | null) {
-  if (!distanceKm || distanceKm <= 0 || !durationMinutes || durationMinutes <= 0) {
-    return [] as Array<{
-      kmIndex: number;
-      distanceKm: number;
-      paceMinPerKm: number | null;
-      avgHeartRate: number | null;
-      maxHeartRate: number | null;
-    }>;
+function averageHeartRateInRange(samples: HeartRateSample[], start: Date, end: Date): number | null {
+  const values = samples
+    .filter((sample) => sample.start < end && sample.end > start)
+    .map((sample) => sample.value);
+  return averageOrNull(values);
+}
+
+function maxHeartRateInRange(samples: HeartRateSample[], start: Date, end: Date): number | null {
+  const values = samples
+    .filter((sample) => sample.start < end && sample.end > start)
+    .map((sample) => sample.value);
+  return values.length > 0 ? Math.max(...values) : null;
+}
+
+function buildWorkoutSplits(workout: AppleHealthWorkoutRecord, heartRateSamples: HeartRateSample[]): DetailedWorkoutSplit[] {
+  const segmentEvents = (workout.events ?? [])
+    .filter((event) => event.type === "HKWorkoutEventTypeSegment" && (event.durationMinutes ?? 0) > 0)
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  if (segmentEvents.length === 0) {
+    return [];
   }
 
-  // No true per-km splits exist in the source export. Avoid generating synthetic rows.
-  void distanceKm;
-  void durationMinutes;
-  void avgHeartRate;
-  void maxHeartRate;
-  return [] as Array<{
-    kmIndex: number;
-    distanceKm: number;
-    paceMinPerKm: number | null;
-    avgHeartRate: number | null;
-    maxHeartRate: number | null;
-  }>;
+  return segmentEvents.map((event, index) => {
+    const durationMinutes = event.durationMinutes ?? 0;
+    const durationSeconds = Math.round(durationMinutes * 60);
+    const endDate = new Date(event.date.getTime() + durationSeconds * 1000);
+    const averageHeartRate = averageHeartRateInRange(heartRateSamples, event.date, endDate);
+    const maxHeartRate = maxHeartRateInRange(heartRateSamples, event.date, endDate);
+
+    return {
+      kilometer: index + 1,
+      durationSeconds,
+      averageHeartRate,
+      paceMinutesPerKm: durationMinutes > 0 ? durationMinutes : null,
+      ...(maxHeartRate !== null ? { maxHeartRate } : {}),
+    };
+  });
+}
+
+function buildKmSplitsFromSplits(splits: WorkoutSplit[]) {
+  return splits.map((split) => ({
+    kmIndex: split.kilometer,
+    distanceKm: 1,
+    paceMinPerKm: split.paceMinutesPerKm ?? null,
+    avgHeartRate: split.averageHeartRate ?? null,
+    maxHeartRate: "maxHeartRate" in split ? (split as DetailedWorkoutSplit).maxHeartRate ?? null : null,
+  }));
+}
+
+function findBestWorkoutRecord(records: TimedNumericRecord[], workout: AppleHealthWorkoutRecord): number | null {
+  const overlapping = records.filter((record) => record.start <= workout.endDate && record.end >= workout.startDate);
+  if (overlapping.length > 0) {
+    return overlapping.reduce((best, record) => {
+      const bestDelta = Math.abs(best.end.getTime() - workout.endDate.getTime());
+      const nextDelta = Math.abs(record.end.getTime() - workout.endDate.getTime());
+      return nextDelta < bestDelta ? record : best;
+    }).value;
+  }
+
+  const nearby = records
+    .filter((record) => Math.abs(record.end.getTime() - workout.endDate.getTime()) <= 30 * 60 * 1000)
+    .sort((a, b) => Math.abs(a.end.getTime() - workout.endDate.getTime()) - Math.abs(b.end.getTime() - workout.endDate.getTime()));
+
+  return nearby[0]?.value ?? null;
+}
+
+function deriveRunningCadenceSpm(workout: AppleHealthWorkoutRecord): number | null {
+  const fromStats = workout.stats?.runningCadenceSpm?.avg ?? null;
+  if (fromStats !== null && Number.isFinite(fromStats) && fromStats > 0) {
+    return fromStats;
+  }
+
+  const speedKmh = workout.stats?.runningSpeedKmh?.avg ?? null;
+  const strideM = workout.stats?.runningStrideM?.avg ?? null;
+  if (speedKmh !== null && speedKmh > 0 && strideM !== null && strideM > 0) {
+    const metersPerMinute = (speedKmh * 1000) / 60;
+    const stepsPerMinute = metersPerMinute / strideM;
+    if (Number.isFinite(stepsPerMinute) && stepsPerMinute > 0) {
+      return stepsPerMinute;
+    }
+  }
+
+  const stepCount = workout.stats?.stepCount ?? null;
+  const durationMinutes = workout.durationMinutes ?? null;
+  if (stepCount !== null && stepCount > 0 && durationMinutes !== null && durationMinutes > 0) {
+    const stepsPerMinute = stepCount / durationMinutes;
+    if (Number.isFinite(stepsPerMinute) && stepsPerMinute > 0) {
+      return stepsPerMinute;
+    }
+  }
+
+  return null;
 }
 
 function bytesToHuman(bytes: number): string {
@@ -271,9 +432,11 @@ export async function POST(request: NextRequest) {
   const readWriteToken = process.env.BLOB_READ_WRITE_TOKEN;
   const warnings: string[] = [];
   let importSucceeded = false;
+  let dbConnected = false;
 
   try {
     await connectDB();
+    dbConnected = true;
 
     // Accept either multipart/form-data (small files / tests) or JSON with blobUrl (large file
     // uploads that went directly to Vercel Blob to bypass the 4.5 MB function body limit).
@@ -415,14 +578,19 @@ export async function POST(request: NextRequest) {
 
     const byDate = new Map<string, DailyAccumulator>();
     const sleepIntervalsByDate = new Map<string, SleepInterval[]>();
-    const heartRateSamplesByDate = new Map<string, number[]>();
+    const heartRateSamplesByDate = new Map<string, HeartRateSample[]>();
+    const allHeartRateSamples: HeartRateSample[] = [];
+    const workoutEffortRecords: TimedNumericRecord[] = [];
+    const estimatedWorkoutEffortRecords: TimedNumericRecord[] = [];
+    const heartRateRecoveryRecords: TimedNumericRecord[] = [];
     const workouts: AppleHealthWorkoutRecord[] = [];
 
     const parsed = await parseAppleHealthXmlStream(exportXmlEntry.nodeStream("nodebuffer"), {
       onRecord: (record) => {
-        const dateKey = toDateKey(record.startDate);
+        const dateKey = record.type === "HKCategoryTypeIdentifierSleepAnalysis"
+          ? toDateKey(record.endDate)
+          : toDateKey(record.startDate);
         const existing = byDate.get(dateKey) ?? initAccumulator(dateKey);
-
         const numeric = valueToNumber(record.value);
         switch (record.type) {
           case "HKQuantityTypeIdentifierActiveEnergyBurned":
@@ -449,16 +617,77 @@ export async function POST(request: NextRequest) {
             if (numeric !== null) {
               existing.heartRateMin = existing.heartRateMin === null ? numeric : Math.min(existing.heartRateMin, numeric);
               existing.heartRateMax = existing.heartRateMax === null ? numeric : Math.max(existing.heartRateMax, numeric);
-
-              const list = heartRateSamplesByDate.get(dateKey) ?? [];
-              list.push(numeric);
-              heartRateSamplesByDate.set(dateKey, list);
+              const sample = {
+                start: record.startDate,
+                end: record.endDate,
+                value: numeric,
+              };
+              appendHeartRateSample(heartRateSamplesByDate, sample);
+              allHeartRateSamples.push(sample);
             }
             break;
           case "HKQuantityTypeIdentifierHeartRateVariabilitySDNN":
             if (numeric !== null) {
               existing.hrvMin = existing.hrvMin === null ? numeric : Math.min(existing.hrvMin, numeric);
               existing.hrvMax = existing.hrvMax === null ? numeric : Math.max(existing.hrvMax, numeric);
+            }
+            break;
+          case "HKQuantityTypeIdentifierHeartRateVariabilityRMSSD":
+            if (numeric !== null) {
+              existing.hrvRmssdSamples.push(numeric);
+            }
+            break;
+          case "HKQuantityTypeIdentifierRespiratoryRate":
+            if (numeric !== null) {
+              existing.respiratoryRateSamples.push(numeric);
+            }
+            break;
+          case "HKQuantityTypeIdentifierWalkingHeartRateAverage":
+            if (numeric !== null) {
+              existing.walkingHeartRateAverageSamples.push(numeric);
+            }
+            break;
+          case "HKQuantityTypeIdentifierAppleSleepingWristTemperature":
+            if (numeric !== null) {
+              existing.sleepingWristTemperatureSamples.push(numeric);
+            }
+            break;
+          case "HKQuantityTypeIdentifierHeartRateRecoveryOneMinute":
+            if (numeric !== null) {
+              existing.heartRateRecoverySamples.push(numeric);
+              heartRateRecoveryRecords.push({
+                start: record.startDate,
+                end: record.endDate,
+                value: numeric,
+              });
+            }
+            break;
+          case "HKQuantityTypeIdentifierTimeInDaylight":
+            if (numeric !== null) {
+              existing.timeInDaylightMinutes = (existing.timeInDaylightMinutes ?? 0) + numeric;
+            }
+            break;
+          case "HKQuantityTypeIdentifierPhysicalEffort":
+            if (numeric !== null) {
+              existing.physicalEffortSamples.push(numeric);
+            }
+            break;
+          case "HKQuantityTypeIdentifierWorkoutEffortScore":
+            if (numeric !== null) {
+              workoutEffortRecords.push({
+                start: record.startDate,
+                end: record.endDate,
+                value: numeric,
+              });
+            }
+            break;
+          case "HKQuantityTypeIdentifierEstimatedWorkoutEffortScore":
+            if (numeric !== null) {
+              estimatedWorkoutEffortRecords.push({
+                start: record.startDate,
+                end: record.endDate,
+                value: numeric,
+              });
             }
             break;
           case "HKCategoryTypeIdentifierSleepAnalysis":
@@ -470,17 +699,17 @@ export async function POST(request: NextRequest) {
                   existing.sleepDetail.remMinutes += minutes;
                   existing.sleepDetail.asleepMinutes += minutes;
                   existing.sleepMinutes = (existing.sleepMinutes ?? 0) + minutes;
-                  appendSleepInterval(sleepIntervalsByDate, record.startDate, record.endDate);
+                  appendSleepInterval(sleepIntervalsByDate, dateKey, record.startDate, record.endDate);
                 } else if (stage === "core") {
                   existing.sleepDetail.coreMinutes += minutes;
                   existing.sleepDetail.asleepMinutes += minutes;
                   existing.sleepMinutes = (existing.sleepMinutes ?? 0) + minutes;
-                  appendSleepInterval(sleepIntervalsByDate, record.startDate, record.endDate);
+                  appendSleepInterval(sleepIntervalsByDate, dateKey, record.startDate, record.endDate);
                 } else if (stage === "deep") {
                   existing.sleepDetail.deepMinutes += minutes;
                   existing.sleepDetail.asleepMinutes += minutes;
                   existing.sleepMinutes = (existing.sleepMinutes ?? 0) + minutes;
-                  appendSleepInterval(sleepIntervalsByDate, record.startDate, record.endDate);
+                  appendSleepInterval(sleepIntervalsByDate, dateKey, record.startDate, record.endDate);
                 } else if (stage === "awake") {
                   existing.sleepDetail.awakeMinutes += minutes;
                 } else if (stage === "inbed") {
@@ -488,7 +717,7 @@ export async function POST(request: NextRequest) {
                 } else if (stage === "asleep") {
                   existing.sleepDetail.asleepMinutes += minutes;
                   existing.sleepMinutes = (existing.sleepMinutes ?? 0) + minutes;
-                  appendSleepInterval(sleepIntervalsByDate, record.startDate, record.endDate);
+                  appendSleepInterval(sleepIntervalsByDate, dateKey, record.startDate, record.endDate);
                 }
               }
             }
@@ -517,11 +746,17 @@ export async function POST(request: NextRequest) {
       const hrSamples = heartRateSamplesByDate.get(dateKey) ?? [];
       const sleepIntervals = sleepIntervalsByDate.get(dateKey) ?? [];
       if (hrSamples.length > 0 && sleepIntervals.length > 0) {
-        const sum = hrSamples.reduce((acc, val) => acc + val, 0);
-        entry.sleepHeartRate.avg = sum / hrSamples.length;
-        entry.sleepHeartRate.min = Math.min(...hrSamples);
-        entry.sleepHeartRate.max = Math.max(...hrSamples);
-        entry.sleepHeartRate.lowAlerts = hrSamples.filter((val) => val < 40).length;
+        const sleepingSamples = hrSamples
+          .filter((sample) => sleepIntervals.some((interval) => overlapsSleep(sample, interval)))
+          .map((sample) => sample.value);
+
+        if (sleepingSamples.length > 0) {
+          const sum = sleepingSamples.reduce((acc, val) => acc + val, 0);
+          entry.sleepHeartRate.avg = sum / sleepingSamples.length;
+          entry.sleepHeartRate.min = Math.min(...sleepingSamples);
+          entry.sleepHeartRate.max = Math.max(...sleepingSamples);
+          entry.sleepHeartRate.lowAlerts = sleepingSamples.filter((val) => val < 40).length;
+        }
       }
       byDate.set(dateKey, entry);
     }
@@ -573,16 +808,22 @@ export async function POST(request: NextRequest) {
     const workoutDocs = correlations.map((item) => {
       const workout = item.workout;
       const externalId = `${workout.workoutActivityType}:${workout.startDate.toISOString()}:${workout.endDate.toISOString()}`;
-      const distanceKm = workout.stats?.distanceKm
-        ?? (item.route?.distanceEstimateMeters ? item.route.distanceEstimateMeters / 1000 : null)
-        ?? workout.totalDistance
-        ?? null;
-      const kmSplits = buildKmSplits(
-        distanceKm,
-        workout.durationMinutes,
-        workout.stats?.heartRate?.avg ?? null,
-        workout.stats?.heartRate?.max ?? null
-      );
+      const splits = buildWorkoutSplits(workout, allHeartRateSamples);
+      const kmSplits = buildKmSplitsFromSplits(splits);
+      const runningCadenceSpm = deriveRunningCadenceSpm(workout);
+      const stats = {
+        ...(workout.stats ?? {}),
+        ...(runningCadenceSpm !== null
+          ? {
+              runningCadenceSpm: {
+                avg: runningCadenceSpm,
+                min: workout.stats?.runningCadenceSpm?.min ?? null,
+                max: workout.stats?.runningCadenceSpm?.max ?? null,
+                sum: workout.stats?.runningCadenceSpm?.sum ?? null,
+              },
+            }
+          : {}),
+      };
 
       return {
         externalId,
@@ -609,8 +850,16 @@ export async function POST(request: NextRequest) {
           confidence: item.confidence,
           matchReason: item.matchReason,
         },
-        stats: workout.stats ?? {},
+        stats,
+        recovery: {
+          heartRateRecoveryOneMinute: findBestWorkoutRecord(heartRateRecoveryRecords, workout),
+        },
+        effort: {
+          workoutEffortScore: findBestWorkoutRecord(workoutEffortRecords, workout),
+          estimatedWorkoutEffortScore: findBestWorkoutRecord(estimatedWorkoutEffortRecords, workout),
+        },
         kmSplits,
+        splits,
         importedAt,
       };
     });
@@ -639,6 +888,64 @@ export async function POST(request: NextRequest) {
       workoutsPersisted: correlations.length,
       workoutInserted: Array.isArray(workoutInsertResult) ? workoutInsertResult.length : 0,
     });
+
+    const profile = await UserProfile.findOneAndUpdate(
+      { key: "primary" },
+      {
+        $setOnInsert: {
+          key: "primary",
+          name: "Shimon",
+          birthdate: "21/04/1979",
+          weightKg: 85,
+          heightCm: 177,
+        },
+      },
+      { upsert: true, returnDocument: "after", lean: true }
+    );
+
+    const cachedEntries: HealthEntryDoc[] = dailyEntries.map((entry) => ({
+      _id: `apple-health:${entry.date.toISOString()}`,
+      ...entry,
+      sourceType: "apple-health",
+      sourceFile: filename,
+      importedAt,
+    }));
+
+    const cachedWorkouts: DashboardWorkoutDoc[] = workoutDocs.map((workout) => ({
+      _id: workout.externalId,
+      externalId: workout.externalId,
+      workoutType: workout.workoutType,
+      startDate: workout.startDate,
+      endDate: workout.endDate,
+      durationMinutes: workout.durationMinutes,
+      totalEnergyBurned: workout.totalEnergyBurned,
+      totalDistance: workout.totalDistance,
+      stats: workout.stats ?? null,
+      routeSummary: workout.routeSummary
+        ? {
+            distanceEstimateMeters: workout.routeSummary.distanceEstimateMeters,
+            pointCount: workout.routeSummary.pointCount,
+            firstTimestamp: workout.routeSummary.firstTimestamp,
+            lastTimestamp: workout.routeSummary.lastTimestamp,
+          }
+        : null,
+      routeCorrelation: workout.routeCorrelation,
+      recovery: workout.recovery ?? null,
+      effort: workout.effort ?? null,
+      kmSplits: workout.kmSplits ?? null,
+      splits: workout.splits ?? null,
+    }));
+
+    const dashboardSnapshot = buildDashboardMetricsPayload({
+      entries: cachedEntries,
+      workouts: cachedWorkouts,
+      profile: normalizeProfile(profile),
+    });
+
+    await Promise.all([
+      writeDashboardMetricsCacheToDisk("__default__", dashboardSnapshot),
+      writeDashboardMetricsCacheToDisk("range=all", dashboardSnapshot),
+    ]);
 
     const result: AppleHealthImportResult = {
       requestId,
@@ -700,24 +1007,30 @@ export async function POST(request: NextRequest) {
     addLog("error", "Import failed", {
       error: err instanceof Error ? err.message : "Internal server error",
     });
-    await ImportLog.updateOne(
-      { requestId },
-      {
-        $set: {
-          status: "error",
-          finishedAt: new Date(),
-          filename,
-          sourceType: "apple-health",
-          error: err instanceof Error ? err.message : "Internal server error",
+    if (dbConnected) {
+      await ImportLog.updateOne(
+        { requestId },
+        {
+          $set: {
+            status: "error",
+            finishedAt: new Date(),
+            filename,
+            sourceType: "apple-health",
+            error: err instanceof Error ? err.message : "Internal server error",
+          },
+          $push: { steps: { $each: logSteps } },
         },
-        $push: { steps: { $each: logSteps } },
-      },
-      { upsert: true }
-    ).catch(() => {
-      // Do not throw from logging fallback
-    });
+        { upsert: true }
+      ).catch(() => {
+        // Do not throw from logging fallback
+      });
+    }
 
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    if (isDatabaseUnavailableError(err)) {
+      return NextResponse.json(databaseUnavailablePayload(requestId), { status: 503 });
+    }
+
+    return NextResponse.json({ error: "Internal server error", code: "internal_error", requestId }, { status: 500 });
   } finally {
     // Clean up blob only after successful import. On failure, keep it for retry/debug.
     if (blobUrlToDelete && importSucceeded) {

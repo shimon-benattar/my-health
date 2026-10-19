@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
+import JSZip from "jszip";
 import IngestionSummary from "@/components/IngestionSummary";
 import type { AppleHealthImportResult, IngestionResult } from "@/types/health";
 
@@ -14,10 +15,29 @@ interface Props {
   compact?: boolean;
 }
 
+function clearDashboardSessionCache(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const keysToDelete: string[] = [];
+  for (let index = 0; index < window.sessionStorage.length; index += 1) {
+    const key = window.sessionStorage.key(index);
+    if (key?.startsWith("dashboard-metrics:")) {
+      keysToDelete.push(key);
+    }
+  }
+
+  for (const key of keysToDelete) {
+    window.sessionStorage.removeItem(key);
+  }
+}
+
 export default function UploadForm({ compact = false }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [status, setStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
+  const [showExportHelp, setShowExportHelp] = useState(false);
   const [result, setResult] = useState<IngestionResult | AppleHealthImportResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [uploadProgress, setUploadProgress] = useState<number>(0);
@@ -130,6 +150,17 @@ export default function UploadForm({ compact = false }: Props) {
     }
   }
 
+  async function isAppleHealthZip(file: File): Promise<boolean> {
+    try {
+      const zip = await JSZip.loadAsync(await file.arrayBuffer());
+      return Object.values(zip.files).some(
+        (entry) => !entry.dir && entry.name.toLowerCase().endsWith("export.xml")
+      );
+    } catch {
+      return false;
+    }
+  }
+
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
     setSelectedFile(file);
@@ -151,6 +182,7 @@ export default function UploadForm({ compact = false }: Props) {
     setUploadSpeedMbps(null);
 
     try {
+      const appleHealthZip = await isAppleHealthZip(selectedFile);
       const updateProgress = (loaded: number, total: number, elapsedSeconds: number) => {
         if (!Number.isFinite(total) || total <= 0) return;
         const progress = Math.min(95, Math.max(0, (loaded / total) * 95));
@@ -165,14 +197,12 @@ export default function UploadForm({ compact = false }: Props) {
 
       // Large files (> 4 MB) bypass the serverless function body limit by uploading
       // directly to Vercel Blob storage, then instructing the import API to fetch from there.
-      if (selectedFile.size > BLOB_THRESHOLD_BYTES) {
-        const checkpointRes = await fetch("/api/health/checkpoint", { cache: "no-store" });
-        if (!checkpointRes.ok) {
-          const checkpointBody = await checkpointRes.json().catch(() => null) as { missing?: string[] } | null;
-          const missing = Array.isArray(checkpointBody?.missing) ? checkpointBody?.missing : [];
-          const suffix = missing.length > 0 ? ` Missing: ${missing.join(", ")}.` : "";
-          throw new Error(`Blob upload is not ready in this deployment.${suffix}`);
-        }
+      // When Blob is not configured (local dev), fall through to the direct form-upload path.
+      const blobReady = appleHealthZip &&
+        selectedFile.size > BLOB_THRESHOLD_BYTES &&
+        await fetch("/api/health/checkpoint", { cache: "no-store" }).then(r => r.ok).catch(() => false);
+
+      if (blobReady) {
 
         await preflightBlobClientToken(selectedFile);
 
@@ -223,6 +253,7 @@ export default function UploadForm({ compact = false }: Props) {
         }
 
         setResult(importBody as IngestionResult | AppleHealthImportResult);
+        clearDashboardSessionCache();
         setUploadProgress(100);
         setStatus("success");
         setSelectedFile(null);
@@ -230,13 +261,14 @@ export default function UploadForm({ compact = false }: Props) {
         return;
       }
 
-      // Small files: use the existing direct-upload path.
-      const firstResponse = await postFormWithProgress("/api/health/upload", selectedFile, updateProgress);
+      const firstEndpoint = appleHealthZip ? "/api/health/import/apple-health" : "/api/health/upload";
+      const firstResponse = await postFormWithProgress(firstEndpoint, selectedFile, updateProgress);
       let finalResponse = firstResponse;
 
       if (!firstResponse.ok) {
         const firstBody = firstResponse.body as { error?: string };
         const shouldTryAppleHealth =
+          !appleHealthZip &&
           firstResponse.status === 422 &&
           typeof firstBody.error === "string" &&
           firstBody.error.toLowerCase().includes("export.xml");
@@ -270,6 +302,7 @@ export default function UploadForm({ compact = false }: Props) {
 
       const data = finalResponse.body as IngestionResult | AppleHealthImportResult;
       setResult(data);
+      clearDashboardSessionCache();
       setUploadProgress(100);
       setStatus("success");
       setSelectedFile(null);
@@ -284,7 +317,39 @@ export default function UploadForm({ compact = false }: Props) {
 
   return (
     <div className={`rounded-lg border border-gray-200 bg-white shadow-sm ${compact ? "p-4" : "p-6"}`}>
-      <h2 className="mb-4 text-lg font-semibold text-gray-900">Upload Health Export ZIP</h2>
+      <div className="mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-gray-900">Upload Health Export ZIP</h2>
+        <div className="relative">
+          <button
+            type="button"
+            aria-expanded={showExportHelp}
+            aria-controls="upload-export-help"
+            aria-label="How to export Apple Health ZIP on iPhone"
+            className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 text-xs font-bold text-gray-600 transition hover:bg-gray-100"
+            onClick={() => setShowExportHelp((prev) => !prev)}
+          >
+            ?
+          </button>
+          {showExportHelp && (
+            <div
+              id="upload-export-help"
+              role="tooltip"
+              className="absolute left-0 top-8 z-20 w-80 rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-700 shadow-xl"
+            >
+              <p className="font-semibold text-gray-900">Export the ZIP from your iPhone</p>
+              <ol className="mt-2 list-decimal space-y-1 pl-5">
+                <li>Open the Health app on your iPhone.</li>
+                <li>Tap your profile picture in the top-right corner.</li>
+                <li>Scroll down and tap <span className="font-medium">Export All Health Data</span>.</li>
+                <li>Confirm by tapping <span className="font-medium">Export</span>.</li>
+                <li>Wait while Apple prepares the ZIP file.</li>
+                <li>Save or share the ZIP to Files, AirDrop, or your computer.</li>
+                <li>Come back here, choose that ZIP file, and start the import.</li>
+              </ol>
+            </div>
+          )}
+        </div>
+      </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         {/* Hidden native file input */}
@@ -381,4 +446,3 @@ export default function UploadForm({ compact = false }: Props) {
     </div>
   );
 }
-

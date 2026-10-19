@@ -3,6 +3,42 @@ export interface RangeValue {
   max: number;
 }
 
+export interface AverageRangeValue {
+  avg: number | null;
+  min: number | null;
+  max: number | null;
+}
+
+export interface RecoveryMetrics {
+  respiratoryRate: AverageRangeValue | null;
+  hrvRmssd: AverageRangeValue | null;
+  walkingHeartRateAverage: number | null;
+  sleepingWristTemperature: number | null;
+  heartRateRecoveryOneMinute: number | null;
+}
+
+export interface VitalityMetrics {
+  timeInDaylightMinutes: number | null;
+  physicalEffortAvg: number | null;
+  physicalEffortMax: number | null;
+}
+
+export interface WorkoutRecoveryMetrics {
+  heartRateRecoveryOneMinute?: number | null;
+}
+
+export interface WorkoutEffortMetrics {
+  workoutEffortScore?: number | null;
+  estimatedWorkoutEffortScore?: number | null;
+}
+
+export interface WorkoutSplit {
+  kilometer: number;
+  durationSeconds: number;
+  averageHeartRate?: number | null;
+  paceMinutesPerKm?: number | null;
+}
+
 export interface HealthEntryInput {
   date: Date;
   sportType?: string | null;
@@ -31,6 +67,8 @@ export interface HealthEntryInput {
     max: number | null;
     lowAlerts: number;
   } | null;
+  recoveryMetrics?: RecoveryMetrics | null;
+  vitalityMetrics?: VitalityMetrics | null;
   syntheticAdjustments?: {
     shabbatSleepAddedMinutes: number;
     shabbatStepsAdded: number;
@@ -86,6 +124,8 @@ export interface HealthEntryDoc {
     max: number | null;
     lowAlerts: number;
   } | null;
+  recoveryMetrics?: RecoveryMetrics | null;
+  vitalityMetrics?: VitalityMetrics | null;
   syntheticAdjustments?: {
     shabbatSleepAddedMinutes: number;
     shabbatStepsAdded: number;
@@ -110,7 +150,16 @@ export interface DashboardMetricsResponse {
   workouts?: DashboardWorkoutDoc[];
   readiness: number;
   readinessTrend: number[];
+  stale?: boolean;
+  staleCode?: string;
+  staleReason?: string;
   profile?: UserProfile | null;
+  recentWatchMetricsAvailability?: {
+    sleepingWristTemperature: { firstDate: string | null; sampleDays: number };
+    hrvRmssd: { firstDate: string | null; sampleDays: number };
+    workoutEffortScore: { firstDate: string | null; sampleCount: number };
+    timeInDaylightMinutes: { firstDate: string | null; sampleDays: number };
+  };
   sportSummary?: Record<
     string,
     {
@@ -135,6 +184,7 @@ export interface DashboardWorkoutStats {
   activeCalories?: number | null;
   stepCount?: number | null;
   runningSpeedKmh?: WorkoutStatSummary | null;
+  runningCadenceSpm?: WorkoutStatSummary | null;
   runningStrideM?: WorkoutStatSummary | null;
   runningGroundContactMs?: WorkoutStatSummary | null;
   runningPowerW?: WorkoutStatSummary | null;
@@ -164,6 +214,8 @@ export interface DashboardWorkoutDoc {
     confidence: number;
     matchReason: string;
   } | null;
+  recovery?: WorkoutRecoveryMetrics | null;
+  effort?: WorkoutEffortMetrics | null;
   kmSplits?: Array<{
     kmIndex: number;
     distanceKm: number;
@@ -171,6 +223,7 @@ export interface DashboardWorkoutDoc {
     avgHeartRate: number | null;
     maxHeartRate: number | null;
   }> | null;
+  splits?: WorkoutSplit[] | null;
 }
 
 export interface AppleHealthImportCounts {

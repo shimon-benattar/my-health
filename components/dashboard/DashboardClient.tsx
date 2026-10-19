@@ -9,15 +9,29 @@ import SourceDataTable from "@/components/dashboard/SourceDataTable";
 import SportSection from "@/components/dashboard/SportSection";
 import { getMockSportData, type SportSession } from "@/lib/mockData";
 import { calcReadinessFromInput } from "@/lib/readiness";
-import { aggregateSeries, type AggregationMode, type Granularity } from "@/lib/timeAggregation";
+import { aggregateSeries, type AggregationMode } from "@/lib/timeAggregation";
 import { activeCaloriesInsight, hrvInsight, readinessInsight, rhrInsight, sleepInsight, stepsInsight, vo2Insight } from "@/lib/dashboardInsights";
 import type { DashboardMetricsResponse, DashboardWorkoutDoc, HealthEntryDoc } from "@/types/health";
 
 type Tab = "overview" | "sport";
 type RangeParam = "7d" | "30d" | "90d" | "all";
+type DashboardGranularity = "week" | "month";
 
 interface Props {
   initialTab: Tab;
+}
+
+function buildStaleSnapshotWarning(reason?: string): string {
+  if (!reason) {
+    return "Live data is temporarily unavailable. Showing the saved dashboard snapshot.";
+  }
+
+  const normalized = /[.!?]$/.test(reason) ? reason : `${reason}.`;
+  return `${normalized} Showing the saved dashboard snapshot.`;
+}
+
+function hasUsableMetrics(metrics: DashboardMetricsResponse): boolean {
+  return (metrics.entries?.length ?? 0) > 0 || (metrics.workouts?.length ?? 0) > 0;
 }
 
 function toLabel(date: Date | string): string {
@@ -132,15 +146,21 @@ function sleepQualityLabel(entry: HealthEntryDoc): string {
   return "Short or fragmented night, recovery likely reduced";
 }
 
-function buildReadinessTrend(entries: HealthEntryDoc[]): number[] {
+function buildReadinessPoints(entries: HealthEntryDoc[]): MetricPoint[] {
   const sortedAsc = [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-  return sortedAsc.map((entry, idx) => {
-    const previous = idx > 0 ? sortedAsc[idx - 1] : null;
-    return calcReadinessFromInput({
-      currentHrvMax: entry.hrv?.max ?? null,
-      yesterdaySleepMinutes: previous?.sleep ?? null,
-    });
+  return sortedAsc.flatMap((entry) => {
+    if (entry.hrv?.max === null || entry.hrv?.max === undefined || entry.sleep === null || entry.sleep === undefined) {
+      return [];
+    }
+
+    return [{
+      label: toLabel(entry.date),
+      value: calcReadinessFromInput({
+        currentHrvMax: entry.hrv.max,
+        yesterdaySleepMinutes: entry.sleep,
+      }),
+    }];
   });
 }
 
@@ -153,7 +173,76 @@ function buildOverviewPoints(entries: HealthEntryDoc[]) {
     hrv: sorted.map((e) => ({ label: toLabel(e.date), value: e.hrv?.max ?? null })) as MetricPoint[],
     sleep: sorted.map((e) => ({ label: toLabel(e.date), value: e.sleep })) as MetricPoint[],
     activeCalories: sorted.map((e) => ({ label: toLabel(e.date), value: e.activeCalories })) as MetricPoint[],
+    respiratoryRate: sorted.map((e) => ({ label: toLabel(e.date), value: e.recoveryMetrics?.respiratoryRate?.avg ?? null })) as MetricPoint[],
+    hrvRmssd: sorted.map((e) => ({ label: toLabel(e.date), value: e.recoveryMetrics?.hrvRmssd?.avg ?? null })) as MetricPoint[],
+    walkingHeartRateAverage: sorted.map((e) => ({ label: toLabel(e.date), value: e.recoveryMetrics?.walkingHeartRateAverage ?? null })) as MetricPoint[],
+    sleepingWristTemperature: sorted.map((e) => ({ label: toLabel(e.date), value: e.recoveryMetrics?.sleepingWristTemperature ?? null })) as MetricPoint[],
+    timeInDaylightMinutes: sorted.map((e) => ({ label: toLabel(e.date), value: e.vitalityMetrics?.timeInDaylightMinutes ?? null })) as MetricPoint[],
   };
+}
+
+function hasEnoughData(points: MetricPoint[], minimum = 2): boolean {
+  return points.filter((point) => point.value !== null && point.value !== undefined).length >= minimum;
+}
+
+function subtractUtcDays(date: Date | string, days: number): Date {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() - days);
+  return next;
+}
+
+function cloneEntryForDate(entry: HealthEntryDoc, date: Date): HealthEntryDoc {
+  return {
+    ...entry,
+    _id: `${entry._id}-display-${date.toISOString().slice(0, 10)}`,
+    date,
+    sportType: null,
+    workoutType: null,
+    workoutDurationMinutes: null,
+    activeCalories: null,
+    cardioFitness: null,
+    heartRate: null,
+    hrv: null,
+    restingHeartRate: null,
+    sleep: null,
+    steps: 0,
+    sleepDetail: null,
+    sleepHeartRate: null,
+  };
+}
+
+export function mergeSaturdayStepsIntoFriday(entries: HealthEntryDoc[]): HealthEntryDoc[] {
+  const sorted = [...entries]
+    .map((entry) => ({ ...entry }))
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  const byDate = new Map<string, HealthEntryDoc>();
+  for (const entry of sorted) {
+    byDate.set(toLabel(entry.date), entry);
+  }
+
+  for (const entry of sorted) {
+    const date = new Date(entry.date);
+    if (date.getUTCDay() !== 6) {
+      continue;
+    }
+
+    const saturdaySteps = entry.steps;
+    entry.steps = null;
+
+    if (saturdaySteps === null || saturdaySteps === undefined) {
+      continue;
+    }
+
+    const fridayDate = subtractUtcDays(date, 1);
+    const fridayKey = toLabel(fridayDate);
+    const fridayEntry = byDate.get(fridayKey) ?? cloneEntryForDate(entry, fridayDate);
+
+    fridayEntry.steps = (fridayEntry.steps ?? 0) + saturdaySteps;
+    byDate.set(fridayKey, fridayEntry);
+  }
+
+  return [...byDate.values()].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 }
 
 function mapSessions(entries: HealthEntryDoc[], sport: string): SportSession[] {
@@ -243,6 +332,7 @@ function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntr
       paceMinPerKm,
       avgSpeedKmh: avgSpeedKmh ?? undefined,
       maxSpeedKmh: s?.runningSpeedKmh?.max ?? undefined,
+      avgRunningCadenceSpm: s?.runningCadenceSpm?.avg ?? undefined,
       avgStrideLengthM: s?.runningStrideM?.avg ?? undefined,
       avgGroundContactMs: s?.runningGroundContactMs?.avg ?? undefined,
       avgRunningPowerW: s?.runningPowerW?.avg ?? undefined,
@@ -251,6 +341,10 @@ function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntr
         ? s.elevationAscendedCm / 100
         : undefined,
       averageMETs: s?.averageMETs ?? undefined,
+      workoutEffortScore: workout.effort?.workoutEffortScore ?? undefined,
+      estimatedWorkoutEffortScore: workout.effort?.estimatedWorkoutEffortScore ?? undefined,
+      heartRateRecoveryOneMinute: workout.recovery?.heartRateRecoveryOneMinute ?? undefined,
+      splits: workout.splits ?? undefined,
       kmSplits: workout.kmSplits ?? undefined,
     };
 
@@ -265,10 +359,11 @@ function mapWorkoutSessions(workouts: DashboardWorkoutDoc[], entries: HealthEntr
 export default function DashboardClient({ initialTab }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [range, setRange] = useState<RangeParam>("all");
-  const [granularity, setGranularity] = useState<Granularity>("day");
+  const [granularity, setGranularity] = useState<DashboardGranularity>("week");
   const [mode, setMode] = useState<AggregationMode>("average");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
+  const [warning, setWarning] = useState<string>("");
   const [metrics, setMetrics] = useState<DashboardMetricsResponse>({ entries: [], readiness: 0, readinessTrend: [] });
   const [showDateFilter, setShowDateFilter] = useState(false);
   const [customStartDate, setCustomStartDate] = useState<string>("");
@@ -280,23 +375,68 @@ export default function DashboardClient({ initialTab }: Props) {
     let active = true;
 
     async function load() {
-      setLoading(true);
-      setError("");
-      try {
-        const params = new URLSearchParams({ range });
-        if (showDateFilter && customStartDate) params.set("startDate", customStartDate);
-        if (showDateFilter && customEndDate) params.set("endDate", customEndDate);
+      const params = new URLSearchParams({ range });
+      if (showDateFilter && customStartDate) params.set("startDate", customStartDate);
+      if (showDateFilter && customEndDate) params.set("endDate", customEndDate);
+      const cacheKey = `dashboard-metrics:${params.toString() || "default"}`;
+      const cached = typeof window !== "undefined" ? window.sessionStorage.getItem(cacheKey) : null;
+      let parsedCached: DashboardMetricsResponse | null = null;
 
-        const res = await fetch(`/api/dashboard/metrics?${params.toString()}`, { cache: "no-store" });
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
+      if (cached) {
+        try {
+          parsedCached = JSON.parse(cached) as DashboardMetricsResponse;
+          if (!hasUsableMetrics(parsedCached)) {
+            parsedCached = null;
+            window.sessionStorage.removeItem(cacheKey);
+          }
+        } catch {
+          window.sessionStorage.removeItem(cacheKey);
         }
-        const body = (await res.json()) as DashboardMetricsResponse;
+      }
+
+      if (parsedCached && active) {
+        setMetrics(parsedCached);
+        setLoading(false);
+        setError("");
+        setWarning("");
+      } else {
+        setLoading(true);
+        setError("");
+        setWarning("");
+      }
+
+      try {
+        params.set("refresh", "1");
+        const res = await fetch(`/api/dashboard/metrics?${params.toString()}`, { cache: "no-store" });
+        const rawBody = await res.json().catch(() => null) as DashboardMetricsResponse | { error?: string } | null;
+        if (!res.ok) {
+          throw new Error(
+            rawBody && typeof rawBody === "object" && "error" in rawBody && typeof rawBody.error === "string"
+              ? rawBody.error
+              : `HTTP ${res.status}`
+          );
+        }
+        const body = rawBody as DashboardMetricsResponse;
         if (active) {
           setMetrics(body);
+          if (typeof window !== "undefined") {
+            window.sessionStorage.setItem(cacheKey, JSON.stringify(body));
+          }
+          if (body.stale) {
+            setWarning(buildStaleSnapshotWarning(body.staleReason));
+          } else {
+            setWarning("");
+          }
         }
       } catch (err) {
         if (active) {
+          if (parsedCached) {
+            setMetrics(parsedCached);
+            setWarning(buildStaleSnapshotWarning(err instanceof Error ? err.message : undefined));
+            setError("");
+            return;
+          }
+
           setError(err instanceof Error ? err.message : "Failed to load metrics");
         }
       } finally {
@@ -313,11 +453,12 @@ export default function DashboardClient({ initialTab }: Props) {
   }, [range, customStartDate, customEndDate, showDateFilter]);
 
   const appleHealthEntries = useMemo(() => metrics.entries.filter(isAppleHealthEntry), [metrics.entries]);
-  const chartEntries = useMemo(() => {
+  const rawChartEntries = useMemo(() => {
     return appleHealthEntries
       .map((entry) => normalizeManualAdjustments(entry))
       .filter((entry): entry is HealthEntryDoc => entry !== null);
   }, [appleHealthEntries]);
+  const chartEntries = useMemo(() => mergeSaturdayStepsIntoFriday(rawChartEntries), [rawChartEntries]);
 
   const earliestDate = useMemo(() => {
     if (chartEntries.length === 0) return "";
@@ -364,17 +505,11 @@ export default function DashboardClient({ initialTab }: Props) {
   }, [availableSports, selectedSport]);
 
   const workoutCount = metrics.workouts?.length ?? 0;
-  const appleHealthReadinessTrend = useMemo(() => buildReadinessTrend(chartEntries), [chartEntries]);
-  const appleHealthReadiness = useMemo(() => {
-    const sorted = [...chartEntries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    const latest = sorted[0] ?? null;
-    const previous = sorted.find((entry) => new Date(entry.date).getTime() < new Date(latest?.date ?? 0).getTime()) ?? null;
-
-    return calcReadinessFromInput({
-      currentHrvMax: latest?.hrv?.max ?? null,
-      yesterdaySleepMinutes: previous?.sleep ?? null,
-    });
-  }, [chartEntries]);
+  const readinessPoints = useMemo(() => buildReadinessPoints(chartEntries), [chartEntries]);
+  const latestMeasuredReadiness = useMemo(() => {
+    const latest = readinessPoints[readinessPoints.length - 1] ?? null;
+    return latest?.value ?? null;
+  }, [readinessPoints]);
 
   const overview = useMemo(() => buildOverviewPoints(chartEntries), [chartEntries]);
   const overviewAgg = useMemo(() => ({
@@ -383,19 +518,14 @@ export default function DashboardClient({ initialTab }: Props) {
     hrv: aggregateSeries(overview.hrv, granularity, mode),
     sleep: aggregateSeries(overview.sleep, granularity, mode),
     activeCalories: aggregateSeries(overview.activeCalories, granularity, mode),
+    respiratoryRate: aggregateSeries(overview.respiratoryRate, granularity, mode),
+    hrvRmssd: aggregateSeries(overview.hrvRmssd, granularity, mode),
+    walkingHeartRateAverage: aggregateSeries(overview.walkingHeartRateAverage, granularity, mode),
+    sleepingWristTemperature: aggregateSeries(overview.sleepingWristTemperature, granularity, mode),
+    timeInDaylightMinutes: aggregateSeries(overview.timeInDaylightMinutes, granularity, mode),
     steps: aggregateSeries(chartEntries.map((e) => ({ label: toLabel(e.date), value: e.steps })), granularity, mode),
-    readiness: aggregateSeries(
-      appleHealthReadinessTrend.map((val, idx) => {
-        const entriesAsc = [...chartEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        return {
-          label: entriesAsc[idx] ? toLabel(entriesAsc[idx].date) : String(idx),
-          value: val,
-        };
-      }),
-      granularity,
-      mode
-    ),
-  }), [overview, granularity, mode, chartEntries, appleHealthReadinessTrend]);
+    readiness: aggregateSeries(readinessPoints, granularity, mode),
+  }), [overview, granularity, mode, chartEntries, readinessPoints]);
 
   const sportSections = useMemo(() => {
     if (workoutSessionsMap.size > 0) {
@@ -452,17 +582,17 @@ export default function DashboardClient({ initialTab }: Props) {
   }, [workoutCount, availableSports.length]);
 
   const sleepDrilldownRows = useMemo(() => {
-    return [...chartEntries]
+    return [...rawChartEntries]
       .filter((e) => e.sleepDetail || e.sleepHeartRate)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 60);
-  }, [chartEntries]);
+  }, [rawChartEntries]);
 
   const totalLowSleepHrAlerts = useMemo(() => {
     return sleepDrilldownRows.reduce((acc, row) => acc + (row.sleepHeartRate?.lowAlerts ?? 0), 0);
   }, [sleepDrilldownRows]);
 
-  const readinessText = readinessInsight(appleHealthReadiness, appleHealthReadinessTrend, range);
+  const readinessText = readinessInsight(latestMeasuredReadiness, readinessPoints.map((point) => point.value ?? 0), range);
   const vo2Text = vo2Insight(chartEntries, metrics.profile ?? null, range);
   const rhrText = rhrInsight(chartEntries, range);
   const hrvText = hrvInsight(chartEntries, range);
@@ -479,9 +609,65 @@ export default function DashboardClient({ initialTab }: Props) {
     { title: "Steps", chart: <MetricChart title="Steps" tooltipKey="steps" data={overviewAgg.steps} unit="steps" />, insight: stepsText },
   ];
 
+  const recoveryCharts = [
+    {
+      key: "respiratory-rate",
+      title: "Respiratory Rate",
+      tooltipKey: "respiratoryRate" as const,
+      data: overviewAgg.respiratoryRate,
+      unit: "breaths/min",
+      visible: hasEnoughData(overview.respiratoryRate),
+    },
+    {
+      key: "hrv-rmssd",
+      title: "HRV RMSSD",
+      tooltipKey: "hrvRmssd" as const,
+      data: overviewAgg.hrvRmssd,
+      unit: "ms",
+      visible: hasEnoughData(overview.hrvRmssd),
+    },
+    {
+      key: "walking-heart-rate-average",
+      title: "Walking Heart Rate Average",
+      tooltipKey: "walkingHeartRateAverage" as const,
+      data: overviewAgg.walkingHeartRateAverage,
+      unit: "bpm",
+      visible: hasEnoughData(overview.walkingHeartRateAverage),
+    },
+    {
+      key: "sleeping-wrist-temperature",
+      title: "Sleeping Wrist Temperature",
+      tooltipKey: "sleepingWristTemperature" as const,
+      data: overviewAgg.sleepingWristTemperature,
+      unit: "degC",
+      visible: hasEnoughData(overview.sleepingWristTemperature),
+    },
+    {
+      key: "time-in-daylight",
+      title: "Time in Daylight",
+      tooltipKey: "timeInDaylight" as const,
+      data: overviewAgg.timeInDaylightMinutes,
+      unit: "min",
+      visible: hasEnoughData(overview.timeInDaylightMinutes),
+      variant: "bar" as const,
+    },
+  ].filter((chart) => chart.visible);
+
+  const recoveryTableRows = useMemo(() => {
+    return [...rawChartEntries]
+      .filter((entry) =>
+        entry.recoveryMetrics?.hrvRmssd?.avg !== null ||
+        entry.recoveryMetrics?.respiratoryRate?.avg !== null ||
+        entry.recoveryMetrics?.sleepingWristTemperature !== null ||
+        entry.vitalityMetrics?.timeInDaylightMinutes !== null
+      )
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 21);
+  }, [rawChartEntries]);
+
   function resetAllFilters() {
     setRange("all");
-    setGranularity("day");
+    setGranularity("week");
     setMode("average");
     setSelectedSport("all");
     setCustomStartDate("");
@@ -523,8 +709,8 @@ export default function DashboardClient({ initialTab }: Props) {
               <p className="mt-1 font-semibold text-gray-900">{importSummary.sportsCaptured}</p>
             </div>
             <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm">
-              <p className="text-xs uppercase tracking-wide text-gray-500">Current Readiness</p>
-              <p className="mt-1 font-semibold text-gray-900">{appleHealthReadiness}</p>
+              <p className="text-xs uppercase tracking-wide text-gray-500">Latest Measured Readiness</p>
+              <p className="mt-1 font-semibold text-gray-900">{latestMeasuredReadiness ?? "N/A"}</p>
             </div>
           </div>
 
@@ -596,21 +782,22 @@ export default function DashboardClient({ initialTab }: Props) {
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-8">
         {loading && <p className="text-sm text-gray-500">Loading dashboard metrics...</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
+        {warning && <p className="text-sm text-amber-700">{warning}</p>}
 
         {!loading && !error && tab === "overview" && (
           <section className="space-y-5" data-testid="overview-panel">
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white p-3 text-sm">
-              <span className="font-medium text-gray-700">View by:</span>
-              {(["day", "week", "month", "year"] as Granularity[]).map((g) => (
-                <button
-                  key={g}
-                  type="button"
-                  onClick={() => setGranularity(g)}
-                  className={`rounded px-2 py-1 ${granularity === g ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700"}`}
-                >
-                  {g}
-                </button>
-              ))}
+              <label className="font-medium text-gray-700" htmlFor="overview-granularity">View by:</label>
+              <select
+                id="overview-granularity"
+                aria-label="overview view by"
+                value={granularity}
+                onChange={(e) => setGranularity(e.target.value as DashboardGranularity)}
+                className="rounded border border-gray-300 bg-white px-2 py-1 text-slate-900"
+              >
+                <option value="week">Week</option>
+                <option value="month">Month</option>
+              </select>
               <span className="ml-2 font-medium text-gray-700">Mode:</span>
               {(["average", "total"] as AggregationMode[]).map((m) => (
                 <button
@@ -624,6 +811,14 @@ export default function DashboardClient({ initialTab }: Props) {
               ))}
             </div>
 
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" data-testid="measurement-coverage-note">
+              Days without a measurement are excluded from charts, averages, and AI summaries. The watch-dependent metrics most affected are sleep, HRV, resting heart rate, active calories, workout heart-rate detail, and readiness.
+            </div>
+
+            <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950" data-testid="sleep-step-labeling-note">
+              Sleep is shown on the <strong>day it ended</strong>, so a Friday sleep value usually means <strong>Thursday-night sleep plus any Friday naps</strong>. Steps are <strong>Shabbat-adjusted</strong>: Friday and Saturday steps are merged into Friday, and Saturday is excluded from the steps average.
+            </div>
+
             <div className="grid gap-4 lg:grid-cols-2">
               {chartInsights.map((item) => (
                 <div key={item.title} className="space-y-3">
@@ -633,13 +828,67 @@ export default function DashboardClient({ initialTab }: Props) {
               ))}
             </div>
 
+            {recoveryCharts.length > 0 && (
+              <div className="space-y-4 rounded-lg border border-emerald-200 bg-emerald-50/50 p-4" data-testid="recovery-vitals-section">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900">Recovery & Vitals</h3>
+                  <p className="text-sm text-slate-700">
+                    Available from your newer watch starting {metrics.recentWatchMetricsAvailability?.sleepingWristTemperature.firstDate ?? metrics.recentWatchMetricsAvailability?.hrvRmssd.firstDate ?? "recently"}.
+                    Older periods remain intentionally blank where these measurements did not exist.
+                  </p>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {recoveryCharts.map((chart) => (
+                    <MetricChart
+                      key={chart.key}
+                      title={chart.title}
+                      tooltipKey={chart.tooltipKey}
+                      data={chart.data}
+                      unit={chart.unit}
+                      variant={chart.variant ?? "line"}
+                    />
+                  ))}
+                </div>
+                <div className="overflow-x-auto rounded border border-slate-200 bg-white">
+                  <table className="min-w-full text-xs text-slate-900">
+                    <thead className="bg-slate-100 text-slate-800">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Date</th>
+                        <th className="px-3 py-2 text-left">Sleep</th>
+                        <th className="px-3 py-2 text-left">Resting HR</th>
+                        <th className="px-3 py-2 text-left">HRV SDNN</th>
+                        <th className="px-3 py-2 text-left">HRV RMSSD</th>
+                        <th className="px-3 py-2 text-left">Respiratory Rate</th>
+                        <th className="px-3 py-2 text-left">Wrist Temp</th>
+                        <th className="px-3 py-2 text-left">Daylight</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recoveryTableRows.map((row) => (
+                        <tr key={`recovery-${String(row._id)}`} className="border-t border-slate-100">
+                          <td className="px-3 py-2 font-medium">{toDisplayDate(row.date)}</td>
+                          <td className="px-3 py-2">{formatSleepDuration(row.sleep)}</td>
+                          <td className="px-3 py-2">{row.restingHeartRate != null ? Math.round(row.restingHeartRate) : "-"}</td>
+                          <td className="px-3 py-2">{row.hrv?.max != null ? Math.round(row.hrv.max) : "-"}</td>
+                          <td className="px-3 py-2">{row.recoveryMetrics?.hrvRmssd?.avg != null ? row.recoveryMetrics.hrvRmssd.avg.toFixed(1) : "-"}</td>
+                          <td className="px-3 py-2">{row.recoveryMetrics?.respiratoryRate?.avg != null ? row.recoveryMetrics.respiratoryRate.avg.toFixed(1) : "-"}</td>
+                          <td className="px-3 py-2">{row.recoveryMetrics?.sleepingWristTemperature != null ? row.recoveryMetrics.sleepingWristTemperature.toFixed(2) : "-"}</td>
+                          <td className="px-3 py-2">{row.vitalityMetrics?.timeInDaylightMinutes != null ? Math.round(row.vitalityMetrics.timeInDaylightMinutes) : "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             <div className="grid gap-4 lg:grid-cols-2">
               <MetricChart title="Readiness Trend" tooltipKey="hrv" data={overviewAgg.readiness} unit="score" />
               <div className="space-y-3">
-                <ReadinessGauge score={appleHealthReadiness} />
+                <ReadinessGauge score={latestMeasuredReadiness} />
                 <MetricConclusion title="Readiness Score" summary={readinessText.summary} trend={readinessText.trend} action={readinessText.action} />
                 <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
-                  Readiness Trend is calculated per day from HRV max and previous-night sleep, then aggregated by your selected granularity.
+                  Readiness appears only on dates where both HRV and sleep were measured, then rolls up into your selected weekly or monthly view.
                 </div>
               </div>
             </div>
@@ -648,7 +897,7 @@ export default function DashboardClient({ initialTab }: Props) {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="font-semibold text-gray-900">Sleep Drilldown</p>
-                  <p className="text-xs text-gray-500">Sleep stages, sleeping heart-rate range, and low-HR alerts from imported records.</p>
+                  <p className="text-xs text-gray-500">Sleep stages, sleeping heart-rate range, and low-HR alerts from imported records. Dates here mean the day the sleep ended.</p>
                 </div>
                 <button
                   type="button"
@@ -661,7 +910,7 @@ export default function DashboardClient({ initialTab }: Props) {
 
               {totalLowSleepHrAlerts > 0 && (
                 <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
-                  Low sleeping heart-rate alerts detected in imported data: {totalLowSleepHrAlerts}. Consider reviewing this with a clinician if this is new for you.
+                  Imported sleep data includes {totalLowSleepHrAlerts} sleeping heart-rate samples below 40 bpm in the nights shown here. Open the drilldown to inspect the <strong>Sleep HR</strong> and <strong>Low HR alerts</strong> columns for each date.
                 </div>
               )}
 
@@ -670,7 +919,7 @@ export default function DashboardClient({ initialTab }: Props) {
                   <table className="min-w-full text-xs text-slate-900">
                     <thead className="bg-slate-100 text-slate-800">
                       <tr>
-                        <th className="px-3 py-2 text-left">Date</th>
+                        <th className="px-3 py-2 text-left">Day Ended</th>
                         <th className="px-3 py-2 text-left">Total Sleep</th>
                         <th className="px-3 py-2 text-left">Sleep Quality</th>
                         <th className="px-3 py-2 text-left">REM</th>
@@ -705,7 +954,7 @@ export default function DashboardClient({ initialTab }: Props) {
               )}
             </div>
 
-            <SourceDataTable entries={chartEntries} hideSourceFilter title="Imported Raw Data (Apple Health)" />
+            <SourceDataTable entries={rawChartEntries} hideSourceFilter title="Imported Raw Data (Apple Health)" />
           </section>
         )}
 
@@ -725,16 +974,15 @@ export default function DashboardClient({ initialTab }: Props) {
               </select>
 
               <span className="ml-2 font-medium text-gray-700">View by:</span>
-              {(["day", "week", "month", "year"] as Granularity[]).map((g) => (
-                <button
-                  key={g}
-                  type="button"
-                  onClick={() => setGranularity(g)}
-                  className={`rounded px-2 py-1 ${granularity === g ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700"}`}
-                >
-                  {g}
-                </button>
-              ))}
+              <select
+                aria-label="sport view by"
+                value={granularity}
+                onChange={(e) => setGranularity(e.target.value as DashboardGranularity)}
+                className="rounded border border-gray-300 bg-white px-2 py-1 text-slate-900"
+              >
+                <option value="week">Week</option>
+                <option value="month">Month</option>
+              </select>
               <span className="ml-2 font-medium text-gray-700">Mode:</span>
               {(["average", "total"] as AggregationMode[]).map((m) => (
                 <button

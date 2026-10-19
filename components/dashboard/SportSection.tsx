@@ -47,6 +47,13 @@ function fmtKm(km: number): string {
   return `${km.toFixed(2)} km`;
 }
 
+function fmtDurationSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "-";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-GB", {
     day: "2-digit", month: "short", year: "numeric",
@@ -240,6 +247,7 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
   const averageStrideM = avg(filteredSessions.map((s) => s.avgStrideLengthM));
   const averageGroundContactMs = avg(filteredSessions.map((s) => s.avgGroundContactMs));
   const averagePowerW = avg(filteredSessions.map((s) => s.avgRunningPowerW));
+  const averageCadenceSpm = avg(filteredSessions.map((s) => s.avgRunningCadenceSpm));
   const averageOscCm = avg(filteredSessions.map((s) => s.avgVerticalOscillationCm));
   const totalElevationM = filteredSessions.reduce((acc, s) => acc + (s.elevationAscendedM ?? 0), 0);
   const avgSpeed = avg(filteredSessions.map((s) => s.avgSpeedKmh));
@@ -253,18 +261,41 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
   const trendPoints: MetricPoint[] = filteredSessions.map((s, i) => ({ label: s.date, value: rolling[i] }));
   const distancePoints: MetricPoint[] = sessionsWithDist.map((s) => ({ label: s.date, value: Math.round((s.distanceKm ?? 0) * 100) / 100 }));
   const pacePoints: MetricPoint[] = sessionsWithPace.map((s) => ({ label: s.date, value: Math.round((s.paceMinPerKm ?? 0) * 100) / 100 }));
+  const cadencePoints: MetricPoint[] = filteredSessions
+    .filter((s) => s.avgRunningCadenceSpm && s.avgRunningCadenceSpm > 0)
+    .map((s) => ({ label: s.date, value: Math.round((s.avgRunningCadenceSpm ?? 0) * 10) / 10 }));
+  const powerPoints: MetricPoint[] = filteredSessions
+    .filter((s) => s.avgRunningPowerW && s.avgRunningPowerW > 0)
+    .map((s) => ({ label: s.date, value: Math.round(s.avgRunningPowerW ?? 0) }));
+  const stridePoints: MetricPoint[] = filteredSessions
+    .filter((s) => s.avgStrideLengthM && s.avgStrideLengthM > 0)
+    .map((s) => ({ label: s.date, value: Math.round((s.avgStrideLengthM ?? 0) * 100) / 100 }));
+  const groundContactPoints: MetricPoint[] = filteredSessions
+    .filter((s) => s.avgGroundContactMs && s.avgGroundContactMs > 0)
+    .map((s) => ({ label: s.date, value: Math.round(s.avgGroundContactMs ?? 0) }));
+  const oscillationPoints: MetricPoint[] = filteredSessions
+    .filter((s) => s.avgVerticalOscillationCm && s.avgVerticalOscillationCm > 0)
+    .map((s) => ({ label: s.date, value: Math.round((s.avgVerticalOscillationCm ?? 0) * 10) / 10 }));
 
   const peakAgg = aggregateSeries(peakPoints, granularity, mode);
   const distanceAgg = aggregateSeries(distancePoints, granularity, mode);
   const paceAgg = aggregateSeries(pacePoints, granularity, mode);
   const trendAgg = aggregateSeries(trendPoints, granularity, mode);
+  const cadenceAgg = aggregateSeries(cadencePoints, granularity, mode);
+  const powerAgg = aggregateSeries(powerPoints, granularity, mode);
+  const strideAgg = aggregateSeries(stridePoints, granularity, mode);
+  const groundContactAgg = aggregateSeries(groundContactPoints, granularity, mode);
+  const oscillationAgg = aggregateSeries(oscillationPoints, granularity, mode);
   const speedPoints: MetricPoint[] = filteredSessions
     .filter((s) => s.avgSpeedKmh && s.avgSpeedKmh > 0)
     .map((s) => ({ label: s.date, value: Math.round((s.avgSpeedKmh ?? 0) * 100) / 100 }));
   const speedAgg = aggregateSeries(speedPoints, granularity, mode);
 
   const hasRunningMetrics = isRunning && filteredSessions.some(
-    (s) => s.avgStrideLengthM || s.avgGroundContactMs || s.avgRunningPowerW
+    (s) => s.avgRunningCadenceSpm || s.avgStrideLengthM || s.avgGroundContactMs || s.avgRunningPowerW || s.avgVerticalOscillationCm || s.elevationAscendedM
+  );
+  const hasWorkoutLoadMetrics = filteredSessions.some(
+    (s) => s.workoutEffortScore || s.estimatedWorkoutEffortScore || s.heartRateRecoveryOneMinute
   );
 
   const selectedRun = useMemo(() => {
@@ -273,7 +304,21 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
   }, [selectedRunKey, sorted]);
 
   const filteredSplits = useMemo(() => {
-    const splits = selectedRun?.kmSplits ?? [];
+    const splits = selectedRun?.splits?.length
+      ? selectedRun.splits.map((split) => ({
+          kmIndex: split.kilometer,
+          distanceKm: 1,
+          paceMinPerKm: split.paceMinutesPerKm ?? null,
+          avgHeartRate: split.averageHeartRate ?? null,
+          maxHeartRate: null,
+          durationSeconds: split.durationSeconds,
+        }))
+      : selectedRun?.kmSplits?.length
+        ? selectedRun.kmSplits.map((split) => ({
+            ...split,
+            durationSeconds: split.paceMinPerKm ? Math.round(split.paceMinPerKm * 60) : 0,
+          }))
+        : [];
     const q = splitFilter.trim().toLowerCase();
 
     const scoped = q
@@ -375,6 +420,10 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
             <p className="mt-1 text-lg font-semibold text-slate-900">{averageAvgHr ? `${Math.round(averageAvgHr)} bpm` : "-"}</p>
           </div>
           <div className="rounded-lg bg-slate-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-600">Running Cadence</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">{averageCadenceSpm ? `${Math.round(averageCadenceSpm)} spm` : "-"}</p>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
             <p className="text-xs uppercase tracking-wide text-slate-600">Avg Stride</p>
             <p className="mt-1 text-lg font-semibold text-slate-900">{averageStrideM ? `${(averageStrideM * 100).toFixed(0)} cm` : "-"}</p>
           </div>
@@ -426,6 +475,16 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
         )}
       </div>
 
+      {isRunning && hasRunningMetrics && (
+        <div className="mt-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+          <MetricChart title="Running Cadence" tooltipKey="runningCadence" data={cadenceAgg} unit="spm" variant="line" />
+          <MetricChart title="Running Power" tooltipKey="runningPower" data={powerAgg} unit="W" variant="line" />
+          <MetricChart title="Stride Length" tooltipKey="runningStride" data={strideAgg} unit="m" variant="line" />
+          <MetricChart title="Ground Contact Time" tooltipKey="groundContact" data={groundContactAgg} unit="ms" variant="line" />
+          <MetricChart title="Vertical Oscillation" tooltipKey="verticalOscillation" data={oscillationAgg} unit="cm" variant="line" />
+        </div>
+      )}
+
       {isRunning && selectedRun && (
         <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
           <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -472,6 +531,7 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
                       <tr>
                         <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSplitSort("km")}>KM</button></th>
                         <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSplitSort("distance")}>Distance</button></th>
+                        <th className="px-3 py-2 text-left font-semibold">Duration</th>
                         <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSplitSort("pace")}>Pace</button></th>
                         <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSplitSort("avgHr")}>Avg HR</button></th>
                         <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSplitSort("maxHr")}>Max HR</button></th>
@@ -482,6 +542,7 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
                         <tr key={split.kmIndex} className="border-t border-slate-100">
                           <td className="px-3 py-2">{split.kmIndex}</td>
                           <td className="px-3 py-2">{split.distanceKm.toFixed(2)} km</td>
+                          <td className="px-3 py-2">{fmtDurationSeconds(split.durationSeconds)}</td>
                           <td className="px-3 py-2">{split.paceMinPerKm ? fmtPace(split.paceMinPerKm) : "-"}</td>
                           <td className="px-3 py-2">{split.avgHeartRate ? Math.round(split.avgHeartRate) : "-"}</td>
                           <td className="px-3 py-2">{split.maxHeartRate ? Math.round(split.maxHeartRate) : "-"}</td>
@@ -495,6 +556,38 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
               )}
             </>
           )}
+        </div>
+      )}
+
+      {hasWorkoutLoadMetrics && (
+        <div className="mt-5 rounded-lg border border-slate-200 bg-white p-4">
+          <h4 className="mb-3 text-sm font-semibold text-slate-900">Workout Load & Recovery</h4>
+          <div className="overflow-x-auto rounded border border-slate-200">
+            <table className="min-w-full text-xs text-slate-900">
+              <thead className="bg-slate-100 text-slate-800">
+                <tr>
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Duration</th>
+                  <th className="px-3 py-2 text-left">Calories</th>
+                  <th className="px-3 py-2 text-left">Effort Score</th>
+                  <th className="px-3 py-2 text-left">Estimated Effort</th>
+                  <th className="px-3 py-2 text-left">1-min HR Recovery</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((s) => (
+                  <tr key={`load-${s.date}-${s.startTime ?? ""}`} className="border-t border-slate-100">
+                    <td className="px-3 py-2">{fmtDate(s.date)}</td>
+                    <td className="px-3 py-2">{s.durationMinutes != null ? `${Math.round(s.durationMinutes)} min` : "-"}</td>
+                    <td className="px-3 py-2">{s.calories > 0 ? Math.round(s.calories) : "-"}</td>
+                    <td className="px-3 py-2">{s.workoutEffortScore != null ? Math.round(s.workoutEffortScore) : "-"}</td>
+                    <td className="px-3 py-2">{s.estimatedWorkoutEffortScore != null ? Math.round(s.estimatedWorkoutEffortScore) : "-"}</td>
+                    <td className="px-3 py-2">{s.heartRateRecoveryOneMinute != null ? `${Math.round(s.heartRateRecoveryOneMinute)} bpm` : "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -556,13 +649,14 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
                   <th className="px-3 py-2 text-left"><button type="button" className="font-semibold" onClick={() => setSort("calories")}>Calories{sortArrow(sortKey === "calories", sortDir)}</button><button type="button" className="ml-1 rounded border border-slate-300 px-1" onClick={() => openSessionMenu("calories")}>▾</button></th>
                   <th className="px-3 py-2 text-left font-semibold">Session Summary</th>
                   {isRunning && <th className="px-3 py-2 text-left font-semibold">Run</th>}
+                  {hasRunningMetrics && <th className="px-3 py-2 text-left">Cadence</th>}
                   {hasRunningMetrics && <th className="px-3 py-2 text-left">Stride</th>}
                   {hasRunningMetrics && <th className="px-3 py-2 text-left">Ground Contact</th>}
                   {hasRunningMetrics && <th className="px-3 py-2 text-left">Power</th>}
                   {hasRunningMetrics && <th className="px-3 py-2 text-left">Elevation</th>}
                 </tr>
                 <tr>
-                  <th colSpan={hasRunningMetrics ? (isRunning ? 15 : 11) : (isRunning ? 11 : 8)} className="px-3 py-2 text-left normal-case">
+                  <th colSpan={hasRunningMetrics ? (isRunning ? 16 : 12) : (isRunning ? 11 : 8)} className="px-3 py-2 text-left normal-case">
                     <input
                       type="text"
                       value={query}
@@ -606,6 +700,9 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
                           Drill down
                         </button>
                       </td>
+                    )}
+                    {hasRunningMetrics && (
+                      <td className="px-3 py-2"><StatCell value={s.avgRunningCadenceSpm} suffix=" spm" /></td>
                     )}
                     {hasRunningMetrics && (
                       <td className="px-3 py-2"><StatCell value={s.avgStrideLengthM ? s.avgStrideLengthM * 100 : undefined} suffix=" cm" /></td>

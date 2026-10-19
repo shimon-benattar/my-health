@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { upload } from "@vercel/blob/client";
+import JSZip from "jszip";
 import UploadForm from "@/components/UploadForm";
 
 vi.mock("@vercel/blob/client", () => ({
@@ -24,7 +25,20 @@ function mockFetch(body: object, status = 200) {
 beforeEach(() => {
   vi.restoreAllMocks();
   mockBlobUpload.mockReset();
+  window.sessionStorage.clear();
 });
+
+async function makeZipFile(
+  files: Array<{ name: string; content: string | Uint8Array }>,
+  fileName = "export.zip"
+) {
+  const zip = new JSZip();
+  for (const file of files) {
+    zip.file(file.name, file.content);
+  }
+  const zipBytes = await zip.generateAsync({ type: "uint8array" });
+  return new File([zipBytes], fileName, { type: "application/zip" });
+}
 
 // ---------------------------------------------------------------------------
 // Rendering
@@ -35,6 +49,19 @@ describe("UploadForm rendering", () => {
     expect(screen.getByRole("button", { name: /start import/i })).toBeInTheDocument();
     expect(screen.getByText(/no file chosen/i)).toBeInTheDocument();
     expect(screen.getByText(/choose zip/i)).toBeInTheDocument();
+  });
+
+  it("shows export instructions when the tooltip button is clicked", async () => {
+    render(<UploadForm />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /how to export apple health zip on iphone/i })
+    );
+
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    expect(screen.getByText(/open the health app on your iphone/i)).toBeInTheDocument();
+    expect(screen.getByText(/export all health data/i)).toBeInTheDocument();
+    expect(screen.getByText(/save or share the zip to files, airdrop, or your computer/i)).toBeInTheDocument();
   });
 
   it("Start Import button is disabled when no file is selected", () => {
@@ -111,38 +138,34 @@ describe("UploadForm successful upload", () => {
     );
   });
 
-  it("falls back to Apple Health endpoint when export.xml is detected", async () => {
-    global.fetch = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 422,
-        json: async () => ({ error: "ZIP includes Apple export.xml but this endpoint currently supports CSV packaged in ZIP" }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          requestId: "req-1",
-          status: "ok",
-          counts: {
-            recordsProcessed: 100,
-            workoutsProcessed: 4,
-            routesFound: 3,
-            routesMatched: 2,
-            unmatchedWorkouts: 2,
-            skipped: 1,
-            inserted: 10,
-            updated: 5,
-          },
-          warnings: ["Ignored export_cda.xml"],
-          sampleUnmatchedWorkouts: [],
-        }),
-      } as Response);
+  it("routes Apple Health ZIPs directly to the Apple Health import endpoint", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        requestId: "req-1",
+        status: "ok",
+        counts: {
+          recordsProcessed: 100,
+          workoutsProcessed: 4,
+          routesFound: 3,
+          routesMatched: 2,
+          unmatchedWorkouts: 2,
+          skipped: 1,
+          inserted: 10,
+          updated: 5,
+        },
+        warnings: ["Ignored export_cda.xml"],
+        sampleUnmatchedWorkouts: [],
+      }),
+    } as Response);
 
     render(<UploadForm />);
     const input = screen.getByTestId("file-input");
-    await userEvent.upload(input, new File(["data"], "apple.zip", { type: "application/zip" }));
+    await userEvent.upload(
+      input,
+      await makeZipFile([{ name: "export.xml", content: "<HealthData />" }], "apple.zip")
+    );
     await userEvent.click(screen.getByRole("button", { name: /start import/i }));
 
     await waitFor(() => {
@@ -151,15 +174,28 @@ describe("UploadForm successful upload", () => {
 
     expect(global.fetch).toHaveBeenNthCalledWith(
       1,
-      "/api/health/upload",
-      expect.objectContaining({ method: "POST" })
-    );
-    expect(global.fetch).toHaveBeenNthCalledWith(
-      2,
       "/api/health/import/apple-health",
       expect.objectContaining({ method: "POST" })
     );
     expect(screen.getByText(/apple health import complete/i)).toBeInTheDocument();
+  });
+
+  it("clears cached dashboard payloads after a successful import", async () => {
+    window.sessionStorage.setItem("dashboard-metrics:range=all", JSON.stringify({ stale: true }));
+    window.sessionStorage.setItem("dashboard-metrics:range=30d", JSON.stringify({ stale: true }));
+    window.sessionStorage.setItem("unrelated-key", "keep");
+
+    mockFetch({ inserted: 1, updated: 0, unchanged: 0, skipped: 0, dateRange: { from: "2026-05-02", to: "2026-05-02" }, pulled: [] });
+    render(<UploadForm />);
+
+    const input = screen.getByTestId("file-input");
+    await userEvent.upload(input, new File(["data"], "health.zip", { type: "application/zip" }));
+    await userEvent.click(screen.getByRole("button", { name: /start import/i }));
+
+    await waitFor(() => screen.getByRole("status"));
+    expect(window.sessionStorage.getItem("dashboard-metrics:range=all")).toBeNull();
+    expect(window.sessionStorage.getItem("dashboard-metrics:range=30d")).toBeNull();
+    expect(window.sessionStorage.getItem("unrelated-key")).toBe("keep");
   });
 
   it("uploads large files to Blob first, then imports using blobUrl", async () => {
@@ -213,9 +249,13 @@ describe("UploadForm successful upload", () => {
 
     render(<UploadForm />);
     const input = screen.getByTestId("file-input");
-    const largeFile = new File([new Uint8Array(4 * 1024 * 1024 + 16)], "large-apple.zip", {
-      type: "application/zip",
-    });
+    const largeFile = await makeZipFile(
+      [
+        { name: "export.xml", content: "<HealthData />" },
+        { name: "payload.bin", content: new Uint8Array(4 * 1024 * 1024 + 16) },
+      ],
+      "large-apple.zip"
+    );
 
     await userEvent.upload(input, largeFile);
     await userEvent.click(screen.getByRole("button", { name: /start import/i }));
@@ -284,9 +324,13 @@ describe("UploadForm successful upload", () => {
 
     render(<UploadForm />);
     const input = screen.getByTestId("file-input");
-    const largeFile = new File([new Uint8Array(4 * 1024 * 1024 + 16)], "large-apple.zip", {
-      type: "application/zip",
-    });
+    const largeFile = await makeZipFile(
+      [
+        { name: "export.xml", content: "<HealthData />" },
+        { name: "payload.bin", content: new Uint8Array(4 * 1024 * 1024 + 16) },
+      ],
+      "large-apple.zip"
+    );
 
     await userEvent.upload(input, largeFile);
     await userEvent.click(screen.getByRole("button", { name: /start import/i }));

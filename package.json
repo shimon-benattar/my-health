@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3010",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:mongodb": "node scripts/check-mongodb-connection.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
@@ -36,6 +37,7 @@
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
     "jsdom": "^29.1.1",
+    "playwright": "^1.61.1",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "typescript": "^5",
