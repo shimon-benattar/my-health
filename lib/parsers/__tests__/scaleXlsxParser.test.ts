@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import JSZip from "jszip";
 import { parseScaleXlsx, ScaleParseError } from "@/lib/parsers/scaleXlsxParser";
-
-const SAMPLE = path.join(process.cwd(), "data", "weight_shimonb_1793831127.xlsx");
+import { buildSampleScaleXlsx } from "./scaleFixture";
 
 async function buildXlsx(rows: string[][], shared: string[] = []): Promise<Uint8Array> {
   // Build a minimal workbook using inline strings, so tests need no sample file.
@@ -21,9 +18,9 @@ async function buildXlsx(rows: string[][], shared: string[] = []): Promise<Uint8
   return zip.generateAsync({ type: "uint8array" });
 }
 
-describe("parseScaleXlsx (real sample file)", () => {
+describe("parseScaleXlsx (export-shaped sample)", () => {
   it("reads 4 readings, metadata and every metric", async () => {
-    const result = await parseScaleXlsx(readFileSync(SAMPLE));
+    const result = await parseScaleXlsx(await buildSampleScaleXlsx());
     expect(result.measurements).toHaveLength(4);
     expect(result.meta).toEqual({ sex: "male", age: 47, heightCm: 177 });
 
@@ -39,7 +36,7 @@ describe("parseScaleXlsx (real sample file)", () => {
   });
 
   it("sorts ascending and keeps the evening reading's time", async () => {
-    const result = await parseScaleXlsx(readFileSync(SAMPLE));
+    const result = await parseScaleXlsx(await buildSampleScaleXlsx());
     expect(result.measurements[0].measuredAt.toISOString()).toBe("2026-10-15T19:55:00.000Z");
   });
 });

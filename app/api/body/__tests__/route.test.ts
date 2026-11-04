@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { NextRequest } from "next/server";
+import { buildSampleScaleXlsx } from "@/lib/parsers/__tests__/scaleFixture";
 
 vi.mock("@/lib/db", () => ({ connectDB: vi.fn().mockResolvedValue(undefined) }));
 
@@ -16,16 +15,14 @@ const { POST } = await import("@/app/api/body/import/route");
 const { GET } = await import("@/app/api/body/measurements/route");
 const { connectDB } = await import("@/lib/db");
 
-const SAMPLE = path.join(process.cwd(), "data", "weight_shimonb_1793831127.xlsx");
-
 function importRequest(file: File | null) {
   const fd = new FormData();
   if (file) fd.append("file", file);
   return { formData: vi.fn().mockResolvedValue(fd) } as unknown as NextRequest;
 }
 
-function sampleFile(name = "scale.xlsx") {
-  return new File([readFileSync(SAMPLE)], name);
+async function sampleFile(name = "scale.xlsx") {
+  return new File([await buildSampleScaleXlsx()], name);
 }
 
 function getRequest(query = "") {
@@ -39,7 +36,7 @@ beforeEach(() => {
 
 describe("POST /api/body/import", () => {
   it("imports the sample workbook and reports counts", async () => {
-    const res = await POST(importRequest(sampleFile()));
+    const res = await POST(importRequest(await sampleFile()));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchObject({ total: 4, inserted: 3, updated: 1, meta: { sex: "male", age: 47, heightCm: 177 } });
@@ -79,14 +76,14 @@ describe("POST /api/body/import", () => {
   it("returns 503 when the database is unavailable", async () => {
     const err = new Error("could not connect to any servers");
     vi.mocked(connectDB).mockRejectedValueOnce(err);
-    const res = await POST(importRequest(sampleFile()));
+    const res = await POST(importRequest(await sampleFile()));
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ code: "database_unavailable" });
   });
 
   it("returns 500 without leaking details on unexpected errors", async () => {
     mockBulkWrite.mockRejectedValueOnce(new Error("secret mongodb://user:pass@host"));
-    const res = await POST(importRequest(sampleFile()));
+    const res = await POST(importRequest(await sampleFile()));
     expect(res.status).toBe(500);
     const text = JSON.stringify(await res.json());
     expect(text).toContain("BODY_IMPORT_FAILED");
