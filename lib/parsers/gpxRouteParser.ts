@@ -1,4 +1,5 @@
 import sax from "sax";
+import { haversineMeters } from "@/lib/parsers/geo";
 
 export interface GpxRouteSummary {
   routePath: string;
@@ -12,19 +13,14 @@ export interface GpxRouteSummary {
     maxLon: number;
   } | null;
   distanceEstimateMeters: number | null;
+  /** Timestamped track points, used transiently at import time (never persisted). */
+  points?: GpxRoutePoint[];
 }
 
-function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const earthRadiusMeters = 6371000;
-
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return earthRadiusMeters * c;
+export interface GpxRoutePoint {
+  lat: number;
+  lon: number;
+  time: Date;
 }
 
 export function parseGpxRoute(routePath: string, gpxXml: string): GpxRouteSummary {
@@ -44,6 +40,8 @@ export function parseGpxRoute(routePath: string, gpxXml: string): GpxRouteSummar
   let currentTimeText = "";
   let lastPoint: { lat: number; lon: number } | null = null;
   let distanceEstimateMeters = 0;
+  const points: GpxRoutePoint[] = [];
+  let pendingPoint: { lat: number; lon: number } | null = null;
 
   parser.onopentag = (node) => {
     if (node.name === "trkpt") {
@@ -56,6 +54,7 @@ export function parseGpxRoute(routePath: string, gpxXml: string): GpxRouteSummar
       }
 
       inTrkpt = true;
+      pendingPoint = { lat, lon };
       pointCount++;
 
       minLat = Math.min(minLat, lat);
@@ -89,6 +88,7 @@ export function parseGpxRoute(routePath: string, gpxXml: string): GpxRouteSummar
       if (!Number.isNaN(maybeDate.getTime())) {
         if (!firstTimestamp) firstTimestamp = maybeDate;
         lastTimestamp = maybeDate;
+        if (pendingPoint) points.push({ ...pendingPoint, time: maybeDate });
       }
       return;
     }
@@ -115,5 +115,6 @@ export function parseGpxRoute(routePath: string, gpxXml: string): GpxRouteSummar
           }
         : null,
     distanceEstimateMeters: pointCount > 1 ? distanceEstimateMeters : null,
+    points,
   };
 }

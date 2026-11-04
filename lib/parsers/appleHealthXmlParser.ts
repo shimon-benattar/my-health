@@ -10,6 +10,27 @@ export interface AppleHealthRecord {
   endDate: Date;
 }
 
+function parseWorkoutEvent(attrs: Record<string, string>): AppleHealthWorkoutEvent | null {
+  const date = parseAppleDate(attrs.date);
+  if (!date || !attrs.type) {
+    return null;
+  }
+
+  let durationMinutes = parseNumeric(attrs.duration);
+  if (durationMinutes !== null && attrs.durationUnit?.toLowerCase() === "s") {
+    durationMinutes = durationMinutes / 60;
+  }
+  if (durationMinutes !== null && attrs.durationUnit?.toLowerCase().includes("hour")) {
+    durationMinutes = durationMinutes * 60;
+  }
+
+  return {
+    type: attrs.type,
+    date,
+    durationMinutes,
+  };
+}
+
 export interface WorkoutStatSummary {
   avg: number | null;
   min: number | null;
@@ -23,12 +44,35 @@ export interface AppleHealthWorkoutStats {
   activeCalories?: number | null;      // HKQuantityTypeIdentifierActiveEnergyBurned sum
   stepCount?: number | null;           // HKQuantityTypeIdentifierStepCount sum
   runningSpeedKmh?: WorkoutStatSummary; // HKQuantityTypeIdentifierRunningSpeed
+  runningCadenceSpm?: WorkoutStatSummary; // HKQuantityTypeIdentifierRunningCadence
   runningStrideM?: WorkoutStatSummary;  // HKQuantityTypeIdentifierRunningStrideLength
   runningGroundContactMs?: WorkoutStatSummary; // HKQuantityTypeIdentifierRunningGroundContactTime
   runningPowerW?: WorkoutStatSummary;   // HKQuantityTypeIdentifierRunningPower
   runningVerticalOscillationCm?: WorkoutStatSummary; // HKQuantityTypeIdentifierRunningVerticalOscillation
   elevationAscendedCm?: number | null; // MetadataEntry HKElevationAscended
   averageMETs?: number | null;         // MetadataEntry HKAverageMETs
+}
+
+export interface AppleHealthWorkoutRecovery {
+  heartRateRecoveryOneMinute?: number | null;
+}
+
+export interface AppleHealthWorkoutEffort {
+  workoutEffortScore?: number | null;
+  estimatedWorkoutEffortScore?: number | null;
+}
+
+export interface AppleHealthWorkoutSplit {
+  kilometer: number;
+  durationSeconds: number;
+  averageHeartRate?: number | null;
+  paceMinutesPerKm?: number | null;
+}
+
+export interface AppleHealthWorkoutEvent {
+  type: string;
+  date: Date;
+  durationMinutes?: number | null;
 }
 
 export interface AppleHealthWorkout {
@@ -41,6 +85,10 @@ export interface AppleHealthWorkout {
   sourceName: string | null;
   sourceVersion: string | null;
   stats: AppleHealthWorkoutStats;
+  recovery?: AppleHealthWorkoutRecovery | null;
+  effort?: AppleHealthWorkoutEffort | null;
+  splits?: AppleHealthWorkoutSplit[];
+  events?: AppleHealthWorkoutEvent[];
 }
 
 export interface AppleHealthParseResult {
@@ -126,6 +174,10 @@ function parseWorkoutNode(node: sax.Tag): AppleHealthWorkout | null {
     sourceName: attrs.sourceName ?? null,
     sourceVersion: attrs.sourceVersion ?? null,
     stats: {},
+    recovery: null,
+    effort: null,
+    splits: [],
+    events: [],
   };
 }
 
@@ -157,6 +209,9 @@ function applyWorkoutStatistics(workout: AppleHealthWorkout, attrs: Record<strin
       break;
     case "HKQuantityTypeIdentifierRunningSpeed":
       workout.stats.runningSpeedKmh = stat;
+      break;
+    case "HKQuantityTypeIdentifierRunningCadence":
+      workout.stats.runningCadenceSpm = stat;
       break;
     case "HKQuantityTypeIdentifierRunningStrideLength":
       workout.stats.runningStrideM = stat;
@@ -236,6 +291,14 @@ function createSaxParserState(handlers: AppleHealthStreamHandlers) {
 
     if (node.name === "WorkoutStatistics" && currentWorkout) {
       applyWorkoutStatistics(currentWorkout, attrs);
+      return;
+    }
+
+    if (node.name === "WorkoutEvent" && currentWorkout) {
+      const workoutEvent = parseWorkoutEvent(attrs);
+      if (workoutEvent) {
+        currentWorkout.events?.push(workoutEvent);
+      }
       return;
     }
 

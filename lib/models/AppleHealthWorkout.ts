@@ -32,12 +32,29 @@ interface WorkoutStats {
   activeCalories?: number | null;
   stepCount?: number | null;
   runningSpeedKmh?: StatSummary | null;
+  runningCadenceSpm?: StatSummary | null;
   runningStrideM?: StatSummary | null;
   runningGroundContactMs?: StatSummary | null;
   runningPowerW?: StatSummary | null;
   runningVerticalOscillationCm?: StatSummary | null;
   elevationAscendedCm?: number | null;
   averageMETs?: number | null;
+}
+
+interface WorkoutRecovery {
+  heartRateRecoveryOneMinute?: number | null;
+}
+
+interface WorkoutEffort {
+  workoutEffortScore?: number | null;
+  estimatedWorkoutEffortScore?: number | null;
+}
+
+interface WorkoutSplit {
+  kilometer: number;
+  durationSeconds: number;
+  averageHeartRate?: number | null;
+  paceMinutesPerKm?: number | null;
 }
 
 export interface IAppleHealthWorkout extends Document {
@@ -54,6 +71,8 @@ export interface IAppleHealthWorkout extends Document {
   routeSummary: RouteSummary | null;
   routeCorrelation: RouteCorrelation;
   stats: WorkoutStats;
+  recovery?: WorkoutRecovery | null;
+  effort?: WorkoutEffort | null;
   kmSplits?: Array<{
     kmIndex: number;
     distanceKm: number;
@@ -61,6 +80,7 @@ export interface IAppleHealthWorkout extends Document {
     avgHeartRate: number | null;
     maxHeartRate: number | null;
   }>;
+  splits?: WorkoutSplit[];
   importedAt: Date;
 }
 
@@ -111,12 +131,28 @@ const WorkoutStatsSchema = new Schema(
     activeCalories: { type: Number, default: null },
     stepCount: { type: Number, default: null },
     runningSpeedKmh: { type: StatSummarySchema, default: null },
+    runningCadenceSpm: { type: StatSummarySchema, default: null },
     runningStrideM: { type: StatSummarySchema, default: null },
     runningGroundContactMs: { type: StatSummarySchema, default: null },
     runningPowerW: { type: StatSummarySchema, default: null },
     runningVerticalOscillationCm: { type: StatSummarySchema, default: null },
     elevationAscendedCm: { type: Number, default: null },
     averageMETs: { type: Number, default: null },
+  },
+  { _id: false }
+);
+
+const WorkoutRecoverySchema = new Schema(
+  {
+    heartRateRecoveryOneMinute: { type: Number, default: null },
+  },
+  { _id: false }
+);
+
+const WorkoutEffortSchema = new Schema(
+  {
+    workoutEffortScore: { type: Number, default: null },
+    estimatedWorkoutEffortScore: { type: Number, default: null },
   },
   { _id: false }
 );
@@ -128,6 +164,16 @@ const KmSplitSchema = new Schema(
     paceMinPerKm: { type: Number, default: null },
     avgHeartRate: { type: Number, default: null },
     maxHeartRate: { type: Number, default: null },
+  },
+  { _id: false }
+);
+
+const WorkoutSplitSchema = new Schema(
+  {
+    kilometer: { type: Number, required: true },
+    durationSeconds: { type: Number, required: true },
+    averageHeartRate: { type: Number, default: null },
+    paceMinutesPerKm: { type: Number, default: null },
   },
   { _id: false }
 );
@@ -147,7 +193,10 @@ const AppleHealthWorkoutSchema = new Schema<IAppleHealthWorkout>(
     routeSummary: { type: RouteSummarySchema, default: null },
     routeCorrelation: { type: RouteCorrelationSchema, required: true },
     stats: { type: WorkoutStatsSchema, default: {} },
+    recovery: { type: WorkoutRecoverySchema, default: null },
+    effort: { type: WorkoutEffortSchema, default: null },
     kmSplits: { type: [KmSplitSchema], default: [] },
+    splits: { type: [WorkoutSplitSchema], default: [] },
     importedAt: { type: Date, required: true, index: true },
   },
   { timestamps: false, collection: "apple_health_workouts" }

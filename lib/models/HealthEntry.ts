@@ -1,5 +1,5 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
-import type { RangeValue } from "@/types/health";
+import type { AverageRangeValue, RangeValue } from "@/types/health";
 
 export interface IHealthEntry extends Document {
   date: Date;
@@ -29,6 +29,18 @@ export interface IHealthEntry extends Document {
     min: number | null;
     max: number | null;
     lowAlerts: number;
+  } | null;
+  recoveryMetrics?: {
+    respiratoryRate: AverageRangeValue | null;
+    hrvRmssd: AverageRangeValue | null;
+    walkingHeartRateAverage: number | null;
+    sleepingWristTemperature: number | null;
+    heartRateRecoveryOneMinute: number | null;
+  } | null;
+  vitalityMetrics?: {
+    timeInDaylightMinutes: number | null;
+    physicalEffortAvg: number | null;
+    physicalEffortMax: number | null;
   } | null;
   syntheticAdjustments?: {
     shabbatSleepAddedMinutes: number;
@@ -63,6 +75,35 @@ const SleepHeartRateSchema = new Schema(
   { _id: false }
 );
 
+const AverageRangeValueSchema = new Schema<AverageRangeValue>(
+  {
+    avg: { type: Number, default: null },
+    min: { type: Number, default: null },
+    max: { type: Number, default: null },
+  },
+  { _id: false }
+);
+
+const RecoveryMetricsSchema = new Schema(
+  {
+    respiratoryRate: { type: AverageRangeValueSchema, default: null },
+    hrvRmssd: { type: AverageRangeValueSchema, default: null },
+    walkingHeartRateAverage: { type: Number, default: null },
+    sleepingWristTemperature: { type: Number, default: null },
+    heartRateRecoveryOneMinute: { type: Number, default: null },
+  },
+  { _id: false }
+);
+
+const VitalityMetricsSchema = new Schema(
+  {
+    timeInDaylightMinutes: { type: Number, default: null },
+    physicalEffortAvg: { type: Number, default: null },
+    physicalEffortMax: { type: Number, default: null },
+  },
+  { _id: false }
+);
+
 const SyntheticAdjustmentsSchema = new Schema(
   {
     shabbatSleepAddedMinutes: { type: Number, default: 0 },
@@ -89,6 +130,8 @@ const HealthEntrySchema = new Schema<IHealthEntry>(
     steps: { type: Number, default: null },
     sleepDetail: { type: SleepDetailSchema, default: null },
     sleepHeartRate: { type: SleepHeartRateSchema, default: null },
+    recoveryMetrics: { type: RecoveryMetricsSchema, default: null },
+    vitalityMetrics: { type: VitalityMetricsSchema, default: null },
     syntheticAdjustments: { type: SyntheticAdjustmentsSchema, default: null },
   },
   { timestamps: false }

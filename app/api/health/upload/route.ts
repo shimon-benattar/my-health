@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import JSZip from "jszip";
+import { databaseUnavailablePayload, isDatabaseUnavailableError } from "@/lib/apiErrors";
 import { connectDB } from "@/lib/db";
 import HealthEntry from "@/lib/models/HealthEntry";
 import HealthEntryBackup from "@/lib/models/HealthEntryBackup";
@@ -68,9 +69,9 @@ export async function POST(request: NextRequest) {
 
   let filename = "unknown";
   const sourceType: "csv" | "apple-health" = "csv";
+  let dbConnected = false;
 
   try {
-    await connectDB();
     const formData = await request.formData();
     const file = formData.get("file");
     const weightKgRaw = formData.get("weightKg");
@@ -116,6 +117,9 @@ export async function POST(request: NextRequest) {
       );
       return NextResponse.json({ error: message }, { status: 422 });
     }
+
+    await connectDB();
+    dbConnected = true;
 
     const csvFile = csvEntries[0];
     addLog("info", "CSV file discovered in zip", { csvPath: csvFile.name, candidates: csvEntries.length });
@@ -237,22 +241,29 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     addLog("error", "Import failed", { message: err instanceof Error ? err.message : "Unknown error" });
-    await ImportLog.updateOne(
-      { requestId },
-      {
-        $set: {
-          status: "error",
-          finishedAt: new Date(),
-          filename,
-          sourceType,
-          error: err instanceof Error ? err.message : "Internal server error",
+    if (dbConnected) {
+      await ImportLog.updateOne(
+        { requestId },
+        {
+          $set: {
+            status: "error",
+            finishedAt: new Date(),
+            filename,
+            sourceType,
+            error: err instanceof Error ? err.message : "Internal server error",
+          },
+          $push: { steps: { $each: logSteps } },
         },
-        $push: { steps: { $each: logSteps } },
-      },
-      { upsert: true }
-    ).catch((updateErr) => {
-      console.error(`[upload][${requestId}] failed to persist error log`, updateErr);
-    });
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+        { upsert: true }
+      ).catch((updateErr) => {
+        console.error(`[upload][${requestId}] failed to persist error log`, updateErr);
+      });
+    }
+
+    if (isDatabaseUnavailableError(err)) {
+      return NextResponse.json(databaseUnavailablePayload(requestId), { status: 503 });
+    }
+
+    return NextResponse.json({ error: "Internal server error", code: "internal_error", requestId }, { status: 500 });
   }
 }

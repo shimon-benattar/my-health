@@ -93,7 +93,7 @@ function normalizeSportType(rawWorkoutType: string): string | null {
   if (!val) return null;
 
   if (val.includes("running")) return "running";
-  if (val.includes("racquetball") || val.includes("racketball") || val.includes("padel")) return "racketball";
+  if (val.includes("racquetball") || val.includes("racketball") || val.includes("padel") || val.includes("pickleball")) return "racketball";
   return val;
 }
 

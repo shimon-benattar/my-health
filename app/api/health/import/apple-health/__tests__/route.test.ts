@@ -375,10 +375,23 @@ describe("POST /api/health/import/apple-health", () => {
             heartRate: { avg: 155, min: 140, max: 172, sum: null },
           },
         },
-        route: null,
-        matched: false,
-        confidence: 0,
-        matchReason: "No route available",
+        route: {
+          routePath: "workout-routes/route_splits.gpx",
+          pointCount: 241,
+          firstTimestamp: new Date("2026-10-10T08:00:00.000Z"),
+          lastTimestamp: new Date("2026-10-10T08:12:00.000Z"),
+          boundingBox: { minLat: 0, maxLat: 0.0216, minLon: 0, maxLon: 0 },
+          distanceEstimateMeters: 2400,
+          // 2.4 km at 5:00/km, one point every 10 m
+          points: Array.from({ length: 241 }, (_, i) => ({
+            lat: (i * 10) / 111194.9,
+            lon: 0,
+            time: new Date(Date.parse("2026-10-10T08:00:00.000Z") + i * 3000),
+          })),
+        },
+        matched: true,
+        confidence: 1,
+        matchReason: "test",
       },
     ]);
 
@@ -404,8 +417,9 @@ describe("POST /api/health/import/apple-health", () => {
     }>;
     expect(insertedWorkouts[0]?.effort?.workoutEffortScore).toBe(8);
     expect(insertedWorkouts[0]?.recovery?.heartRateRecoveryOneMinute).toBe(31);
-    expect(insertedWorkouts[0]?.splits).toHaveLength(2);
-    expect(insertedWorkouts[0]?.splits?.[0]).toMatchObject({ kilometer: 1, durationSeconds: 330 });
+    // Splits come from the GPX route (2 full km + 0.4 km remainder), not Apple's segment events.
+    expect(insertedWorkouts[0]?.splits).toHaveLength(3);
+    expect(insertedWorkouts[0]?.splits?.[0]).toMatchObject({ kilometer: 1, durationSeconds: 300 });
     expect(insertedWorkouts[0]?.stats?.runningCadenceSpm?.avg).toBeGreaterThan(0);
   });
 

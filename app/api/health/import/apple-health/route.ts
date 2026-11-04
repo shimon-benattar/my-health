@@ -12,7 +12,8 @@ import AppleHealthWorkout from "@/lib/models/AppleHealthWorkout";
 import ImportArchive from "@/lib/models/ImportArchive";
 import UserProfile from "@/lib/models/UserProfile";
 import { parseAppleHealthXmlStream, type AppleHealthWorkout as AppleHealthWorkoutRecord } from "@/lib/parsers/appleHealthXmlParser";
-import { parseGpxRoute } from "@/lib/parsers/gpxRouteParser";
+import { parseGpxRoute, type GpxRoutePoint } from "@/lib/parsers/gpxRouteParser";
+import { buildKmSplitsFromRoute, type RouteKmSplit } from "@/lib/parsers/routeSplits";
 import { correlateWorkoutsToRoutes } from "@/lib/parsers/workoutRouteCorrelation";
 import type { AverageRangeValue, DashboardWorkoutDoc, HealthEntryDoc, HealthEntryInput, AppleHealthImportResult, UserProfile as DashboardUserProfile, WorkoutSplit } from "@/types/health";
 
@@ -107,10 +108,6 @@ type TimedNumericRecord = {
   start: Date;
   end: Date;
   value: number;
-};
-
-type DetailedWorkoutSplit = WorkoutSplit & {
-  maxHeartRate?: number | null;
 };
 
 function averageOrNull(values: number[]): number | null {
@@ -247,53 +244,29 @@ function applySyntheticShabbatAugmentation() {
   // Disabled intentionally: dashboard should only reflect imported measurements.
 }
 
-function averageHeartRateInRange(samples: HeartRateSample[], start: Date, end: Date): number | null {
-  const values = samples
-    .filter((sample) => sample.start < end && sample.end > start)
-    .map((sample) => sample.value);
-  return averageOrNull(values);
+// Splits come from the matched GPX route (real 1 km boundaries). Apple's
+// HKWorkoutEventTypeSegment events mix km and mile segments, so they are not used.
+function buildWorkoutKmSplits(route: { points?: GpxRoutePoint[] } | null, heartRateSamples: HeartRateSample[]): RouteKmSplit[] {
+  if (!route?.points || route.points.length < 2) return [];
+  return buildKmSplitsFromRoute(route.points, heartRateSamples);
 }
 
-function maxHeartRateInRange(samples: HeartRateSample[], start: Date, end: Date): number | null {
-  const values = samples
-    .filter((sample) => sample.start < end && sample.end > start)
-    .map((sample) => sample.value);
-  return values.length > 0 ? Math.max(...values) : null;
+function toWorkoutSplits(kmSplits: RouteKmSplit[]): WorkoutSplit[] {
+  return kmSplits.map((split) => ({
+    kilometer: split.kmIndex,
+    durationSeconds: split.durationSeconds,
+    averageHeartRate: split.avgHeartRate,
+    paceMinutesPerKm: split.paceMinPerKm,
+  }));
 }
 
-function buildWorkoutSplits(workout: AppleHealthWorkoutRecord, heartRateSamples: HeartRateSample[]): DetailedWorkoutSplit[] {
-  const segmentEvents = (workout.events ?? [])
-    .filter((event) => event.type === "HKWorkoutEventTypeSegment" && (event.durationMinutes ?? 0) > 0)
-    .sort((a, b) => a.date.getTime() - b.date.getTime());
-
-  if (segmentEvents.length === 0) {
-    return [];
-  }
-
-  return segmentEvents.map((event, index) => {
-    const durationMinutes = event.durationMinutes ?? 0;
-    const durationSeconds = Math.round(durationMinutes * 60);
-    const endDate = new Date(event.date.getTime() + durationSeconds * 1000);
-    const averageHeartRate = averageHeartRateInRange(heartRateSamples, event.date, endDate);
-    const maxHeartRate = maxHeartRateInRange(heartRateSamples, event.date, endDate);
-
-    return {
-      kilometer: index + 1,
-      durationSeconds,
-      averageHeartRate,
-      paceMinutesPerKm: durationMinutes > 0 ? durationMinutes : null,
-      ...(maxHeartRate !== null ? { maxHeartRate } : {}),
-    };
-  });
-}
-
-function buildKmSplitsFromSplits(splits: WorkoutSplit[]) {
-  return splits.map((split) => ({
-    kmIndex: split.kilometer,
-    distanceKm: 1,
-    paceMinPerKm: split.paceMinutesPerKm ?? null,
-    avgHeartRate: split.averageHeartRate ?? null,
-    maxHeartRate: "maxHeartRate" in split ? (split as DetailedWorkoutSplit).maxHeartRate ?? null : null,
+function toKmSplitDocs(kmSplits: RouteKmSplit[]) {
+  return kmSplits.map((split) => ({
+    kmIndex: split.kmIndex,
+    distanceKm: split.distanceKm,
+    paceMinPerKm: split.paceMinPerKm,
+    avgHeartRate: split.avgHeartRate,
+    maxHeartRate: split.maxHeartRate,
   }));
 }
 
@@ -808,8 +781,9 @@ export async function POST(request: NextRequest) {
     const workoutDocs = correlations.map((item) => {
       const workout = item.workout;
       const externalId = `${workout.workoutActivityType}:${workout.startDate.toISOString()}:${workout.endDate.toISOString()}`;
-      const splits = buildWorkoutSplits(workout, allHeartRateSamples);
-      const kmSplits = buildKmSplitsFromSplits(splits);
+      const routeKmSplits = buildWorkoutKmSplits(item.route, allHeartRateSamples);
+      const splits = toWorkoutSplits(routeKmSplits);
+      const kmSplits = toKmSplitDocs(routeKmSplits);
       const runningCadenceSpm = deriveRunningCadenceSpm(workout);
       const stats = {
         ...(workout.stats ?? {}),

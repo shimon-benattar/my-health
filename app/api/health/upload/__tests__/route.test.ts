@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import JSZip from "jszip";
+import { connectDB } from "@/lib/db";
 
 // ---------------------------------------------------------------------------
 // Mock mongoose and DB helpers before importing the route
@@ -21,6 +22,7 @@ vi.mock("@/lib/models/ImportLog", () => ({ default: { create: mockImportLogCreat
 
 // Import route AFTER mocks are set up
 const { POST } = await import("@/app/api/health/upload/route");
+const mockConnectDB = vi.mocked(connectDB);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,6 +73,7 @@ function makeEmptyBodyRequest() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockConnectDB.mockResolvedValue(undefined);
   mockCreate.mockResolvedValue(undefined);
   mockUpdateOne.mockResolvedValue({ acknowledged: true, modifiedCount: 1 });
   mockBackupCreate.mockResolvedValue(undefined);
@@ -108,6 +111,7 @@ describe("POST /api/health/upload", () => {
     expect(res.status).toBe(422);
     const body = await res.json();
     expect(body.error).toMatch(/supports csv packaged in zip/i);
+    expect(mockConnectDB).not.toHaveBeenCalled();
   });
 
   it("returns 200 with inserted count for new rows", async () => {
@@ -196,6 +200,15 @@ describe("POST /api/health/upload", () => {
     expect(res.status).toBe(500);
     const body = await res.json();
     expect(body.error).toMatch(/internal server error/i);
+  });
+
+  it("returns 503 with database_unavailable when MongoDB cannot be reached", async () => {
+    mockConnectDB.mockRejectedValueOnce(new Error("Could not connect to any servers in your MongoDB Atlas cluster."));
+    const res = await POST(await makeRequest(VALID_CSV));
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.code).toBe("database_unavailable");
+    expect(body.error).toMatch(/database is unavailable/i);
   });
 });
 
