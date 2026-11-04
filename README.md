@@ -1,36 +1,122 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# my-health
 
-## Getting Started
+A personal health dashboard built with Next.js. Import your Apple Health export and visualize steps, sleep, heart rate, HRV, VO₂ max, active calories, and workouts over time.
 
-First, run the development server:
+## Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **Apple Health import** — upload the ZIP from iPhone's Health app; the app parses `export.xml`, extracts daily metrics and workout records, and correlates GPS routes from embedded GPX files.
+- **Dashboard** — overview and sport tabs with time-series charts (Recharts), aggregated metrics, and AI-generated readiness insights.
+- **MongoDB storage** — daily health entries, workout records, import logs, and a rolling 30-day archive of replaced data.
+- **Vercel Blob** — large ZIP uploads are streamed directly to Blob storage to bypass the 4.5 MB function body limit, then fetched server-side for processing.
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Framework | Next.js 14 (App Router) |
+| Language | TypeScript |
+| Styling | Tailwind CSS |
+| Charts | Recharts |
+| Database | MongoDB via Mongoose |
+| File storage | Vercel Blob |
+| Tests | Vitest + Testing Library |
+
+## Getting started
+
+### Prerequisites
+
+- Node.js 20+
+- A running MongoDB instance (local or Atlas)
+- (Optional) Vercel Blob credentials for large-file imports
+
+### Environment variables
+
+Create `my-health/.env.local`:
+
+```env
+MONGODB_URI=mongodb://localhost:27017/my-health
+
+# Vercel Blob — required for ZIP uploads larger than ~4 MB
+BLOB_READ_WRITE_TOKEN=your_token_here
+
+# Set to "public" if your blob store is public; default is "private"
+BLOB_ACCESS_MODE=private
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Run locally
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cd my-health
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open [http://localhost:3010](http://localhost:3010).
 
-## Learn More
+### Other commands
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run build        # production build
+npm test             # run test suite (Vitest)
+npm run test:watch   # watch mode
+npm run test:coverage
+npm run lint
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Importing Apple Health data
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. On iPhone: **Health → your avatar → Export All Health Data** — this produces a ZIP file.
+2. On the app's home page, drag-drop or select the ZIP in the upload form.
+3. Files ≤4 MB upload directly; larger files are staged to Vercel Blob first.
+4. The import pipeline:
+   - Unzips and streams `export.xml` via a SAX parser.
+   - Aggregates daily buckets: steps, active calories, heart rate (min/max), resting HR, HRV, VO₂ max, sleep stages.
+   - Parses GPX route files from `workout-routes/` and correlates them to workout records.
+   - Archives any existing Apple Health data before replacing it (retained for 30 days).
 
-## Deploy on Vercel
+## Project structure
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+app/
+  api/
+    health/
+      import/apple-health/   # ZIP import endpoint
+      import/upload-url/     # pre-signed Blob URL endpoint
+      entries/               # CRUD for daily health entries
+      checkpoint/            # last-import checkpoint
+      upload/                # generic upload + log endpoints
+    dashboard/metrics/       # aggregated metrics for dashboard
+    profile/                 # user profile
+  dashboard/                 # dashboard page
+  page.tsx                   # landing / upload page
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+components/
+  dashboard/                 # chart components, DashboardClient
+  UploadForm.tsx
+  EntriesTable.tsx
+  ProfileMenu.tsx
+
+lib/
+  db.ts                      # MongoDB connection
+  models/                    # Mongoose schemas
+  parsers/
+    appleHealthXmlParser.ts  # SAX-based export.xml parser
+    csvParser.ts
+    gpxRouteParser.ts
+    workoutRouteCorrelation.ts
+  dashboardInsights.ts
+  readiness.ts
+  timeAggregation.ts
+
+types/
+  health.ts                  # shared TypeScript types
+```
+
+## Engineering standards
+
+See [instructions.md](./instructions.md) for the full guide. Key rules:
+
+- Every bug fix must include a regression test.
+- New API endpoints need a success case + at least one invalid-input case.
+- Error responses follow `{ error, code, requestId }`.
+- `npm test` and `npm run build` must pass before merging.
