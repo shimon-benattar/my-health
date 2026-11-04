@@ -27,3 +27,11 @@ describe("Landing page", () => {
     expect(screen.getByTestId("file-input")).toBeInTheDocument();
   });
 });
+
+describe("Landing page scale import", () => {
+  it("renders a scale import link and upload form", () => {
+    render(<Home />);
+    expect(screen.getByTestId("import-scale-link")).toHaveAttribute("href", "#import-scale");
+    expect(screen.getByTestId("scale-file-input")).toBeInTheDocument();
+  });
+});

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import BodyCompositionSection, { BodySnapshotCard } from "@/components/dashboard/BodyCompositionSection";
 import MetricChart, { type MetricPoint } from "@/components/dashboard/MetricChart";
 import MetricConclusion from "@/components/dashboard/MetricConclusion";
 import ReadinessGauge from "@/components/dashboard/ReadinessGauge";
@@ -13,7 +14,7 @@ import { aggregateSeries, type AggregationMode } from "@/lib/timeAggregation";
 import { activeCaloriesInsight, hrvInsight, readinessInsight, rhrInsight, sleepInsight, stepsInsight, vo2Insight } from "@/lib/dashboardInsights";
 import type { DashboardMetricsResponse, DashboardWorkoutDoc, HealthEntryDoc } from "@/types/health";
 
-type Tab = "overview" | "sport";
+type Tab = "overview" | "body" | "sport";
 type RangeParam = "7d" | "30d" | "90d" | "all";
 type DashboardGranularity = "week" | "month";
 
@@ -755,6 +756,14 @@ export default function DashboardClient({ initialTab }: Props) {
             </button>
             <button
               type="button"
+              onClick={() => setTab("body")}
+              className={`rounded-md px-4 py-2 text-sm font-medium ${tab === "body" ? "bg-white text-blue-700 shadow-sm" : "text-gray-600"}`}
+              data-testid="tab-body"
+            >
+              Body Composition
+            </button>
+            <button
+              type="button"
               onClick={() => setTab("sport")}
               className={`rounded-md px-4 py-2 text-sm font-medium ${tab === "sport" ? "bg-white text-blue-700 shadow-sm" : "text-gray-600"}`}
               data-testid="tab-sport"
@@ -786,6 +795,7 @@ export default function DashboardClient({ initialTab }: Props) {
 
         {!loading && !error && tab === "overview" && (
           <section className="space-y-5" data-testid="overview-panel">
+            <BodySnapshotCard range={range} onOpen={() => setTab("body")} />
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white p-3 text-sm">
               <label className="font-medium text-gray-700" htmlFor="overview-granularity">View by:</label>
               <select
@@ -957,6 +967,8 @@ export default function DashboardClient({ initialTab }: Props) {
             <SourceDataTable entries={rawChartEntries} hideSourceFilter title="Imported Raw Data (Apple Health)" />
           </section>
         )}
+
+        {!loading && !error && tab === "body" && <BodyCompositionSection range={range} healthEntries={rawChartEntries} />}
 
         {!loading && !error && tab === "sport" && (
           <section className="space-y-5" data-testid="sport-panel">

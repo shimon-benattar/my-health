@@ -6,6 +6,7 @@ A personal health dashboard built with Next.js. Import your Apple Health export 
 
 - **Apple Health import** — upload the ZIP from iPhone's Health app; the app parses `export.xml`, extracts daily metrics and workout records, and correlates GPS routes from embedded GPX files.
 - **Dashboard** — overview and sport tabs with time-series charts (Recharts), aggregated metrics, and AI-generated readiness insights.
+- **Body Composition tab** — import a smart-scale `.xlsx` export (weight, fat, muscle, visceral fat, water, BMR, …). Shows tiles, trends, a per-parameter explainer ("what it is" / "what it means for me") with sourced reference ranges, and an overview snapshot. Evening readings are excluded from trends by default because hydration distorts impedance results.
 - **MongoDB storage** — daily health entries, workout records, import logs, and a rolling 30-day archive of replaced data.
 - **Vercel Blob** — large ZIP uploads are streamed directly to Blob storage to bypass the 4.5 MB function body limit, then fetched server-side for processing.
 

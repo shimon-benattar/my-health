@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ScaleUploadForm from "@/components/ScaleUploadForm";
 import UploadForm from "@/components/UploadForm";
 
 const STAT_CARDS = [
@@ -72,10 +73,21 @@ export default function Home() {
           >
             Import ZIP Data
           </Link>
+          <Link
+            href="#import-scale"
+            data-testid="import-scale-link"
+            className="rounded-xl border border-white/20 bg-white/10 px-8 py-3.5 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-white/20"
+          >
+            Import Scale Data
+          </Link>
         </div>
 
         <div id="import-data" className="mt-10 w-full max-w-2xl animate-fade-in-up-delay-2 text-left">
           <UploadForm compact />
+        </div>
+
+        <div id="import-scale" className="mt-6 w-full max-w-2xl animate-fade-in-up-delay-2 text-left">
+          <ScaleUploadForm compact />
         </div>
       </div>
     </div>

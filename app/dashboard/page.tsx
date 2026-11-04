@@ -6,7 +6,8 @@ export default function DashboardPage({
 }: {
   searchParams?: { tab?: string; version?: string };
 }) {
-  const initialTab = searchParams?.tab === "sport" ? "sport" : "overview";
+  const initialTab =
+    searchParams?.tab === "sport" ? "sport" : searchParams?.tab === "body" ? "body" : "overview";
 
   return <DashboardClient initialTab={initialTab} />;
 }

@@ -217,10 +217,6 @@ describe("GET /api/dashboard/metrics", () => {
     const firstRes = await GET(makeRequest("http://localhost:3000/api/dashboard/metrics?range=all"));
     expect(firstRes.status).toBe(200);
 
-    const transientError = Object.assign(new Error("Socket 'secureConnect' timed out after 30000ms"), {
-      name: "MongoServerSelectionError",
-    });
-
     const secondRes = await GET(makeRequest("http://localhost:3000/api/dashboard/metrics?range=all"));
     expect(secondRes.status).toBe(200);
     const body = await secondRes.json();

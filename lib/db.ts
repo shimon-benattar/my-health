@@ -41,7 +41,8 @@ export async function connectDB(): Promise<typeof mongoose> {
       throw error;
     }
 
-    if (mongoose.connection.readyState === 1) {
+    // readyState changes while awaiting; widen so TS doesn't keep the earlier narrowing.
+    if ((mongoose.connection.readyState as number) === 1) {
       return mongoose;
     }
 

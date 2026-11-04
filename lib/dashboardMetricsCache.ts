@@ -4,7 +4,8 @@ import path from "node:path";
 type CachedPayload = unknown;
 
 const dashboardPayloadCache = new Map<string, CachedPayload>();
-const CACHE_PATH = path.join(process.cwd(), ".cache", "dashboard-metrics-cache.json");
+// Overridable so automated tests never overwrite the real on-disk snapshot.
+const CACHE_PATH = process.env.DASHBOARD_METRICS_CACHE_PATH ?? path.join(process.cwd(), ".cache", "dashboard-metrics-cache.json");
 
 export function getDashboardMetricsCache(key: string): CachedPayload | undefined {
   return dashboardPayloadCache.get(key);
