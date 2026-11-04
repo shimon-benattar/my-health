@@ -63,7 +63,7 @@ function normalizeSportKey(raw: string | null | undefined): string | null {
 
   if (!compact) return null;
   if (compact.includes("run")) return "running";
-  if (compact.includes("padel")) return "padel";
+  if (compact.includes("padel") || compact.includes("pickleball")) return "padel";
   if (compact.includes("racketball") || compact.includes("racquetball")) return "racketball";
   if (compact.includes("walk")) return "walking";
   if (compact.includes("cycle") || compact.includes("bike")) return "cycling";

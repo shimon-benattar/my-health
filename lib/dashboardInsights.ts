@@ -29,6 +29,56 @@ function toOneDecimal(value: number): string {
   return Number.isInteger(value) ? String(Math.round(value)) : value.toFixed(1);
 }
 
+interface RecentComparison {
+  currentAverage: number;
+  currentCount: number;
+  previousAverage: number | null;
+  previousCount: number;
+}
+
+function measuredDaysLabel(count: number): string {
+  return `${count} measured day${count === 1 ? "" : "s"}`;
+}
+
+function recentComparison(values: number[]): RecentComparison | null {
+  if (values.length === 0) {
+    return null;
+  }
+
+  const windowSize = Math.min(7, Math.max(1, Math.floor(values.length / 2)));
+  const current = values.slice(-windowSize);
+  const previous = values.slice(-windowSize * 2, -windowSize);
+
+  return {
+    currentAverage: avg(current),
+    currentCount: current.length,
+    previousAverage: previous.length > 0 ? avg(previous) : null,
+    previousCount: previous.length,
+  };
+}
+
+function comparisonText(
+  values: number[],
+  formatter: (value: number) => string,
+  noun: string,
+  trendDescriptor: string
+): string {
+  const comparison = recentComparison(values);
+  if (!comparison) {
+    return `No ${noun} baseline is available in the current window.`;
+  }
+
+  if (comparison.previousAverage === null) {
+    return `Recent ${noun} covers ${measuredDaysLabel(comparison.currentCount)} in the current window.`;
+  }
+
+  const delta = comparison.currentAverage - comparison.previousAverage;
+  const direction = delta === 0 ? "matches" : delta > 0 ? "is higher than" : "is lower than";
+  const deltaText = delta === 0 ? "" : ` by ${formatter(Math.abs(delta))}`;
+
+  return `Recent ${noun} (${measuredDaysLabel(comparison.currentCount)}) ${direction} the previous ${measuredDaysLabel(comparison.previousCount)}${deltaText}. ${trendDescriptor}`;
+}
+
 /** Linear regression slope. Values must be ascending (oldest first). */
 function linearSlope(values: number[]): number {
   const n = values.length;
@@ -79,32 +129,43 @@ function rangeSuffix(range: string): string {
   return "over the selected window";
 }
 
-export function readinessInsight(score: number, trend: number[], range = "all"): InsightBlock {
+export function readinessInsight(score: number | null, trend: number[], range = "all"): InsightBlock {
   const suffix = rangeSuffix(range);
-  // Trend values are already from API in date order; no entries sort needed here
   const ascending = [...trend];
+  const comparison = recentComparison(ascending);
   const t = trendDirection(ascending);
 
   const summary =
-    score >= 70
-      ? `Readiness is ${score}/100 — strong enough for quality training ${suffix}.`
-      : score >= 40
-        ? `Readiness is ${score}/100 — workable but not ideal for back-to-back hard sessions ${suffix}.`
-        : `Readiness is ${score}/100 — recovery should take priority ${suffix}.`;
+    score === null || comparison === null
+      ? "Readiness appears only on days that have both HRV and sleep measurements."
+      : score >= 70
+        ? `Latest measured readiness is ${score}/100, with a recent average of ${Math.round(comparison.currentAverage)}/100 across ${measuredDaysLabel(comparison.currentCount)} ${suffix}.`
+        : score >= 40
+          ? `Latest measured readiness is ${score}/100, with a recent average of ${Math.round(comparison.currentAverage)}/100 across ${measuredDaysLabel(comparison.currentCount)} ${suffix}.`
+          : `Latest measured readiness is ${score}/100, with a recent average of ${Math.round(comparison.currentAverage)}/100 across ${measuredDaysLabel(comparison.currentCount)} ${suffix}.`;
 
   const trendText =
-    t === "up"
-      ? `Readiness is trending upward ${suffix}, suggesting recovery is improving.`
-      : t === "down"
-        ? `Readiness is declining ${suffix}, suggesting fatigue may be building.`
-        : `Readiness is broadly stable ${suffix}.`;
+    comparison === null
+      ? "No readiness trend is available yet."
+      : comparisonText(
+          ascending,
+          (value) => `${Math.round(value)} points`,
+          "readiness",
+          t === "up"
+            ? `Overall readiness is still trending upward ${suffix}.`
+            : t === "down"
+              ? `Overall readiness is still trending downward ${suffix}.`
+              : `Overall readiness is broadly stable ${suffix}.`
+        );
 
   const action =
-    score >= 70
-      ? "Keep the current training rhythm. Protect sleep and hydration so you can repeat hard sessions."
-      : score >= 40
-        ? "One quality session is fine; follow it with easier days and monitor sleep."
-        : "Swap intensity for recovery: light movement, extra sleep, and good hydration before attempting hard training.";
+    score === null
+      ? "Wear the watch overnight on comparison days if you want readiness coverage."
+      : score >= 70
+        ? "Keep the current training rhythm. Protect sleep and hydration so you can repeat hard sessions."
+        : score >= 40
+          ? "One quality session is fine; follow it with easier days and monitor sleep."
+          : "Swap intensity for recovery: light movement, extra sleep, and good hydration before attempting hard training.";
 
   return { summary, trend: trendText, action };
 }
@@ -113,7 +174,8 @@ export function vo2Insight(entries: HealthEntryDoc[], profile: UserProfile | nul
   // Sort ascending so trendDirection reads oldest → newest
   const sorted = [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const values = sorted.map((e) => e.cardioFitness).filter((v): v is number => v !== null);
-  const average = avg(values);
+  const comparison = recentComparison(values);
+  const average = comparison?.currentAverage ?? avg(values);
   const age = profile ? ageFromBirthdate(profile.birthdate) : null;
   const direction = trendDirection(values);
   const suffix = rangeSuffix(range);
@@ -141,15 +203,20 @@ export function vo2Insight(entries: HealthEntryDoc[], profile: UserProfile | nul
     values.length === 0
       ? `No VO2 Max samples in the selected window.`
       : verdict
-        ? `Average VO2 Max is ${toOneDecimal(average)} mL/min·kg${ageLabel} — ${verdict}.`
-        : `Average VO2 Max is ${toOneDecimal(average)} mL/min·kg ${suffix}.`;
+        ? `Recent VO2 Max is ${toOneDecimal(average)} mL/min·kg${ageLabel} across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — ${verdict}.`
+        : `Recent VO2 Max is ${toOneDecimal(average)} mL/min·kg across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} ${suffix}.`;
 
   const trendText =
-    direction === "up"
-      ? `VO2 Max is slowly rising ${suffix} — a positive sign of aerobic adaptation.`
-      : direction === "down"
-        ? `VO2 Max has been drifting downward ${suffix} — possible aerobic detraining or incomplete recovery.`
-        : `VO2 Max is stable ${suffix}, with no consistent upward or downward movement.`;
+    comparisonText(
+      values,
+      (value) => `${toOneDecimal(value)} mL/min·kg`,
+      "VO2 Max",
+      direction === "up"
+        ? `VO2 Max is still rising ${suffix} — a positive sign of aerobic adaptation.`
+        : direction === "down"
+          ? `VO2 Max is still drifting downward ${suffix} — possible aerobic detraining or incomplete recovery.`
+          : `VO2 Max is stable ${suffix}, with no consistent upward or downward movement.`
+    );
 
   const action =
     direction === "down"
@@ -162,7 +229,8 @@ export function vo2Insight(entries: HealthEntryDoc[], profile: UserProfile | nul
 export function rhrInsight(entries: HealthEntryDoc[], range = "all"): InsightBlock {
   const sorted = [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const values = sorted.map((e) => e.restingHeartRate).filter((v): v is number => v !== null);
-  const average = avg(values);
+  const comparison = recentComparison(values);
+  const average = comparison?.currentAverage ?? avg(values);
   const direction = trendDirection(values);
   const suffix = rangeSuffix(range);
 
@@ -170,17 +238,22 @@ export function rhrInsight(entries: HealthEntryDoc[], range = "all"): InsightBlo
     values.length === 0
       ? "No Resting Heart Rate samples in the selected window."
       : average <= 55
-        ? `Average resting HR is ${toOneDecimal(average)} bpm — a strong recovery indicator ${suffix}.`
+        ? `Recent resting HR is ${toOneDecimal(average)} bpm across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — a strong recovery indicator ${suffix}.`
         : average <= 65
-          ? `Average resting HR is ${toOneDecimal(average)} bpm — acceptable but worth watching ${suffix}.`
-          : `Average resting HR is ${toOneDecimal(average)} bpm — elevated, which may reflect stress or fatigue ${suffix}.`;
+          ? `Recent resting HR is ${toOneDecimal(average)} bpm across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — acceptable but worth watching ${suffix}.`
+          : `Recent resting HR is ${toOneDecimal(average)} bpm across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — elevated, which may reflect stress or fatigue ${suffix}.`;
 
   const trendText =
-    direction === "down"
-      ? `Resting HR is trending down ${suffix} — lower baseline strain is a positive sign.`
-      : direction === "up"
-        ? `Resting HR is trending up ${suffix} — can mean accumulated stress or under-recovery.`
-        : `Resting HR is stable ${suffix}.`;
+    comparisonText(
+      values,
+      (value) => `${toOneDecimal(value)} bpm`,
+      "resting HR",
+      direction === "down"
+        ? `Resting HR is trending down ${suffix} — lower baseline strain is a positive sign.`
+        : direction === "up"
+          ? `Resting HR is trending up ${suffix} — can mean accumulated stress or under-recovery.`
+          : `Resting HR is stable ${suffix}.`
+    );
 
   return {
     summary,
@@ -192,7 +265,8 @@ export function rhrInsight(entries: HealthEntryDoc[], range = "all"): InsightBlo
 export function hrvInsight(entries: HealthEntryDoc[], range = "all"): InsightBlock {
   const sorted = [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const values = sorted.map((e) => e.hrv?.max ?? null).filter((v): v is number => v !== null);
-  const average = avg(values);
+  const comparison = recentComparison(values);
+  const average = comparison?.currentAverage ?? avg(values);
   const direction = trendDirection(values);
   const cv = coefficientOfVariation(values);
   const isVolatile = cv > 0.20;
@@ -202,21 +276,26 @@ export function hrvInsight(entries: HealthEntryDoc[], range = "all"): InsightBlo
     values.length === 0
       ? "No HRV samples in the selected window."
       : average >= 60
-        ? `Average HRV peak is ${toOneDecimal(average)} ms — a healthy recovery signal ${suffix}.`
+        ? `Recent HRV peak is ${toOneDecimal(average)} ms across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — a healthy recovery signal ${suffix}.`
         : average >= 40
-          ? `Average HRV peak is ${toOneDecimal(average)} ms — moderate; acceptable but not exceptional ${suffix}.`
-          : `Average HRV peak is ${toOneDecimal(average)} ms — low, suggesting ongoing recovery strain ${suffix}.`;
+          ? `Recent HRV peak is ${toOneDecimal(average)} ms across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — moderate; acceptable but not exceptional ${suffix}.`
+          : `Recent HRV peak is ${toOneDecimal(average)} ms across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — low, suggesting ongoing recovery strain ${suffix}.`;
 
   const volatilityNote = isVolatile
     ? ` HRV fluctuates significantly day-to-day (${Math.round(cv * 100)}% variation), which is normal with varied training loads, illness cycles, or stress. Focus on the multi-week baseline rather than individual readings.`
     : "";
 
   const trendText =
-    direction === "up"
-      ? `HRV is on an upward trajectory ${suffix} — recovery is generally improving.${volatilityNote}`
-      : direction === "down"
-        ? `HRV has a downward lean ${suffix} — could indicate cumulative stress or training load.${volatilityNote}`
-        : `HRV is broadly stable ${suffix}.${volatilityNote}`;
+    `${comparisonText(
+      values,
+      (value) => `${toOneDecimal(value)} ms`,
+      "HRV",
+      direction === "up"
+        ? `HRV is on an upward trajectory ${suffix} — recovery is generally improving.`
+        : direction === "down"
+          ? `HRV has a downward lean ${suffix} — could indicate cumulative stress or training load.`
+          : `HRV is broadly stable ${suffix}.`
+    )}${volatilityNote}`;
 
   const action = isVolatile
     ? "With high day-to-day HRV variability, avoid rigid training rules. Train hard when you feel ready; back off when multiple signals (sleep, mood, RHR) are poor together."
@@ -228,7 +307,8 @@ export function hrvInsight(entries: HealthEntryDoc[], range = "all"): InsightBlo
 export function sleepInsight(entries: HealthEntryDoc[], range = "all"): InsightBlock {
   const sorted = [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const values = sorted.map((e) => e.sleep).filter((v): v is number => v !== null);
-  const average = avg(values);
+  const comparison = recentComparison(values);
+  const average = comparison?.currentAverage ?? avg(values);
   const direction = trendDirection(values);
   const hours = average / 60;
   const suffix = rangeSuffix(range);
@@ -237,17 +317,22 @@ export function sleepInsight(entries: HealthEntryDoc[], range = "all"): InsightB
     values.length === 0
       ? "No sleep data in the selected window."
       : hours >= 7.5
-        ? `Average sleep is ${hours.toFixed(1)} hrs — solid recovery time ${suffix}.`
+        ? `Recent sleep is ${hours.toFixed(1)} hrs across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — solid recovery time ${suffix}.`
         : hours >= 6.5
-          ? `Average sleep is ${hours.toFixed(1)} hrs — adequate but slightly short for optimal recovery ${suffix}.`
-          : `Average sleep is ${hours.toFixed(1)} hrs — likely limiting recovery and readiness ${suffix}.`;
+          ? `Recent sleep is ${hours.toFixed(1)} hrs across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — adequate but slightly short for optimal recovery ${suffix}.`
+          : `Recent sleep is ${hours.toFixed(1)} hrs across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — likely limiting recovery and readiness ${suffix}.`;
 
   const trendText =
-    direction === "up"
-      ? `Sleep duration is trending upward ${suffix} — good for readiness.`
-      : direction === "down"
-        ? `Sleep duration is trending downward ${suffix} — this can suppress readiness over time.`
-        : `Sleep duration is stable ${suffix}.`;
+    comparisonText(
+      values,
+      (value) => `${(value / 60).toFixed(1)} hrs`,
+      "sleep",
+      direction === "up"
+        ? `Sleep duration is trending upward ${suffix} — good for readiness.`
+        : direction === "down"
+          ? `Sleep duration is trending downward ${suffix} — this can suppress readiness over time.`
+          : `Sleep duration is stable ${suffix}.`
+    );
 
   return {
     summary,
@@ -259,7 +344,8 @@ export function sleepInsight(entries: HealthEntryDoc[], range = "all"): InsightB
 export function stepsInsight(entries: HealthEntryDoc[], range = "all"): InsightBlock {
   const sorted = [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const values = sorted.map((e) => e.steps).filter((v): v is number => v !== null);
-  const average = avg(values);
+  const comparison = recentComparison(values);
+  const average = comparison?.currentAverage ?? avg(values);
   const direction = trendDirection(values);
   const suffix = rangeSuffix(range);
 
@@ -267,17 +353,22 @@ export function stepsInsight(entries: HealthEntryDoc[], range = "all"): InsightB
     values.length === 0
       ? "No step data in the selected window."
       : average >= 9000
-        ? `Average ${Math.round(average).toLocaleString("en-US")} steps/day — strong daily movement baseline ${suffix}.`
+        ? `Recent movement is ${Math.round(average).toLocaleString("en-US")} steps/day across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — strong daily movement baseline ${suffix}.`
         : average >= 6000
-          ? `Average ${Math.round(average).toLocaleString("en-US")} steps/day — decent but inconsistent days are visible ${suffix}.`
-          : `Average ${Math.round(average).toLocaleString("en-US")} steps/day — low daily activity ${suffix}.`;
+          ? `Recent movement is ${Math.round(average).toLocaleString("en-US")} steps/day across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — decent but inconsistent days are visible ${suffix}.`
+          : `Recent movement is ${Math.round(average).toLocaleString("en-US")} steps/day across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — low daily activity ${suffix}.`;
 
   const trendText =
-    direction === "up"
-      ? `Daily movement is trending up ${suffix} — good for general health.`
-      : direction === "down"
-        ? `Daily movement is declining ${suffix} — check whether rest days cluster together or activity has dropped.`
-        : `Daily movement is stable ${suffix}.`;
+    comparisonText(
+      values,
+      (value) => `${Math.round(value).toLocaleString("en-US")} steps`,
+      "step count",
+      direction === "up"
+        ? `Daily movement is trending up ${suffix} — good for general health.`
+        : direction === "down"
+          ? `Daily movement is declining ${suffix} — check whether rest days cluster together or activity has dropped.`
+          : `Daily movement is stable ${suffix}.`
+    );
 
   return {
     summary,
@@ -289,7 +380,8 @@ export function stepsInsight(entries: HealthEntryDoc[], range = "all"): InsightB
 export function activeCaloriesInsight(entries: HealthEntryDoc[], range = "all"): InsightBlock {
   const sorted = [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const values = sorted.map((e) => e.activeCalories).filter((v): v is number => v !== null);
-  const average = avg(values);
+  const comparison = recentComparison(values);
+  const average = comparison?.currentAverage ?? avg(values);
   const direction = trendDirection(values);
   const suffix = rangeSuffix(range);
 
@@ -297,17 +389,22 @@ export function activeCaloriesInsight(entries: HealthEntryDoc[], range = "all"):
     values.length === 0
       ? "No active calorie data in the selected window."
       : average >= 700
-        ? `Average ${Math.round(average)} active kcal/day — high activity load ${suffix}.`
+          ? `Recent active calories are ${Math.round(average)} kcal/day across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — high activity load ${suffix}.`
         : average >= 400
-          ? `Average ${Math.round(average)} active kcal/day — moderate daily load ${suffix}.`
-          : `Average ${Math.round(average)} active kcal/day — relatively light activity ${suffix}.`;
+          ? `Recent active calories are ${Math.round(average)} kcal/day across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — moderate daily load ${suffix}.`
+          : `Recent active calories are ${Math.round(average)} kcal/day across ${measuredDaysLabel(comparison?.currentCount ?? values.length)} — relatively light activity ${suffix}.`;
 
   const trendText =
-    direction === "up"
-      ? `Active calorie load is trending upward ${suffix}.`
-      : direction === "down"
-        ? `Active calorie load is trending downward ${suffix}.`
-        : `Active calorie load is stable ${suffix}.`;
+    comparisonText(
+      values,
+      (value) => `${Math.round(value)} kcal`,
+      "active calories",
+      direction === "up"
+          ? `Active calorie load is trending upward ${suffix}.`
+          : direction === "down"
+            ? `Active calorie load is trending downward ${suffix}.`
+            : `Active calorie load is stable ${suffix}.`
+    );
 
   return {
     summary,

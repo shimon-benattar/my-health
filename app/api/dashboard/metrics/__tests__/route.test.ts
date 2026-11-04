@@ -123,6 +123,16 @@ describe("GET /api/dashboard/metrics", () => {
     expect(body.readiness).toBe(0);
   });
 
+  it("matches pickleball workouts when filtering by padel", async () => {
+    mockLean.mockResolvedValue([]);
+    mockWorkoutLean.mockResolvedValue([]);
+
+    await GET(makeRequest("http://localhost:3000/api/dashboard/metrics?sportType=padel"));
+    expect(mockWorkoutFind).toHaveBeenCalledWith(
+      expect.objectContaining({ workoutType: { $regex: "padel|pickleball", $options: "i" } })
+    );
+  });
+
   it("returns 500 when database query fails", async () => {
     mockLean.mockRejectedValue(new Error("db down"));
     mockWorkoutLean.mockResolvedValue([]);

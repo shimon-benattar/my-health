@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import MetricChart from "@/components/dashboard/MetricChart";
+import MetricChart, { formatAxisLabel, formatTooltipLabel } from "@/components/dashboard/MetricChart";
 
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -38,5 +38,12 @@ describe("MetricChart", () => {
 
     expect(screen.getByTestId("metric-chart-rendered")).toBeInTheDocument();
     expect(screen.getByTestId("line-element")).toBeInTheDocument();
+  });
+
+  it("formats daily, weekly, and monthly labels with clearer dates", () => {
+    expect(formatAxisLabel("2026-09-15")).toBe("15 Sept");
+    expect(formatAxisLabel("2026-W38")).toBe("14 Sept");
+    expect(formatAxisLabel("2026-09")).toBe("Sept 26");
+    expect(formatTooltipLabel("2026-09-15")).toContain("Tue, 15 Sept 2026");
   });
 });

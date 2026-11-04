@@ -14,12 +14,22 @@ export interface SportSession {
   paceMinPerKm?: number;
   avgSpeedKmh?: number;
   maxSpeedKmh?: number;
+  avgRunningCadenceSpm?: number;
   avgStrideLengthM?: number;
   avgGroundContactMs?: number;
   avgRunningPowerW?: number;
   avgVerticalOscillationCm?: number;
   elevationAscendedM?: number;
   averageMETs?: number;
+  workoutEffortScore?: number;
+  estimatedWorkoutEffortScore?: number;
+  heartRateRecoveryOneMinute?: number;
+  splits?: Array<{
+    kilometer: number;
+    durationSeconds: number;
+    averageHeartRate?: number | null;
+    paceMinutesPerKm?: number | null;
+  }>;
   kmSplits?: Array<{
     kmIndex: number;
     distanceKm: number;

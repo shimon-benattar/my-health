@@ -11,6 +11,7 @@ import {
   BarChart,
   Bar,
 } from "recharts";
+import type { ReactNode } from "react";
 import TooltipInfo from "@/components/dashboard/TooltipInfo";
 import { TOOLTIP_CONTENT } from "@/lib/tooltipContent";
 
@@ -41,23 +42,98 @@ function formatTooltipValue(value: TooltipValue, unit: string): string {
   return `${value}${unit ? ` ${unit}` : ""}`;
 }
 
-function formatAxisLabel(label: string): string {
+function weekStartFromIsoLabel(label: string): Date | null {
+  const match = label.match(/^(\d{4})-W(\d{2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const week = Number(match[2]);
+  const fourthOfJanuary = new Date(Date.UTC(year, 0, 4));
+  const fourthDay = fourthOfJanuary.getUTCDay() || 7;
+  const weekOneMonday = new Date(fourthOfJanuary);
+  weekOneMonday.setUTCDate(fourthOfJanuary.getUTCDate() - fourthDay + 1);
+
+  const weekStart = new Date(weekOneMonday);
+  weekStart.setUTCDate(weekOneMonday.getUTCDate() + (week - 1) * 7);
+  return weekStart;
+}
+
+export function formatAxisLabel(label: string): string {
   if (/^\d{4}-W\d{2}$/.test(label)) {
-    const [year, week] = label.split("-W");
-    return `W${Number(week)} '${year.slice(2)}`;
+    const weekStart = weekStartFromIsoLabel(label);
+    if (!weekStart) return label;
+
+    return weekStart.toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      timeZone: "UTC",
+    });
   }
 
   if (/^\d{4}-\d{2}$/.test(label)) {
-    const [year, month] = label.split("-");
-    return `${month}/${year.slice(2)}`;
+    const [year, month] = label.split("-").map(Number);
+    return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-GB", {
+      month: "short",
+      year: "2-digit",
+      timeZone: "UTC",
+    });
   }
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(label)) {
-    const [, month, day] = label.split("-");
-    return `${day}/${month}`;
+    return new Date(`${label}T00:00:00.000Z`).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      timeZone: "UTC",
+    });
   }
 
   return label;
+}
+
+export function formatTooltipLabel(label: string): string {
+  if (/^\d{4}-W\d{2}$/.test(label)) {
+    const weekStart = weekStartFromIsoLabel(label);
+    if (!weekStart) return label;
+    const weekEnd = new Date(weekStart);
+    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
+
+    return `Week of ${weekStart.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    })} to ${weekEnd.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    })}`;
+  }
+
+  if (/^\d{4}-\d{2}$/.test(label)) {
+    const [year, month] = label.split("-").map(Number);
+    return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-GB", {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(label)) {
+    return new Date(`${label}T00:00:00.000Z`).toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  }
+
+  return label;
+}
+
+function formatTooltipLabelNode(label: ReactNode): ReactNode {
+  return typeof label === "string" ? formatTooltipLabel(label) : label;
 }
 
 export default function MetricChart({ title, tooltipKey, data, unit = "", variant = "line" }: Props) {
@@ -95,7 +171,10 @@ export default function MetricChart({ title, tooltipKey, data, unit = "", varian
                   height={xTickAngle !== 0 ? 56 : 30}
                 />
                 <YAxis tick={{ fontSize: 12 }} width={42} />
-                <Tooltip formatter={(value) => formatTooltipValue(value as TooltipValue, unit)} />
+                <Tooltip
+                  formatter={(value) => formatTooltipValue(value as TooltipValue, unit)}
+                  labelFormatter={formatTooltipLabelNode}
+                />
                 <Bar dataKey="value" fill="#2563eb" radius={[6, 6, 0, 0]} />
               </BarChart>
             ) : (
@@ -111,7 +190,10 @@ export default function MetricChart({ title, tooltipKey, data, unit = "", varian
                   height={xTickAngle !== 0 ? 56 : 30}
                 />
                 <YAxis tick={{ fontSize: 12 }} width={42} />
-                <Tooltip formatter={(value) => formatTooltipValue(value as TooltipValue, unit)} />
+                <Tooltip
+                  formatter={(value) => formatTooltipValue(value as TooltipValue, unit)}
+                  labelFormatter={formatTooltipLabelNode}
+                />
                 <Line type="monotone" dataKey="value" stroke="#1d4ed8" strokeWidth={2} dot={false} />
               </LineChart>
             )}

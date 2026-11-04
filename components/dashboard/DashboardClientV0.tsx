@@ -43,7 +43,7 @@ function mapSessions(entries: HealthEntryDoc[], sport: string): SportSession[] {
   return entries
     .filter((e) => {
       const workout = e.workoutType?.trim().toLowerCase() ?? "";
-      return sportFromEntry(e) === normalized || workout.includes(normalized) || (normalized === "racketball" && workout.includes("padel"));
+      return sportFromEntry(e) === normalized || workout.includes(normalized) || (normalized === "racketball" && (workout.includes("padel") || workout.includes("pickleball")));
     })
     .filter((e) => e.heartRate?.max != null)
     .map((e) => ({

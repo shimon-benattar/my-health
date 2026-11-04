@@ -1,5 +1,5 @@
 interface Props {
-  score: number;
+  score: number | null;
 }
 
 function getBandColor(score: number): string {
@@ -15,6 +15,18 @@ function getStrokeColor(score: number): string {
 }
 
 export default function ReadinessGauge({ score }: Props) {
+  if (score === null) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm" data-testid="readiness-gauge">
+        <h3 className="text-sm font-semibold text-gray-900">Readiness Score</h3>
+        <div className="mt-4">
+          <p className="text-3xl font-extrabold text-slate-400" data-testid="readiness-value">N/A</p>
+          <p className="text-xs text-gray-500">Shown only on dates with both HRV and sleep measurements.</p>
+        </div>
+      </div>
+    );
+  }
+
   const bounded = Math.max(0, Math.min(100, Math.round(score)));
   const circumference = 2 * Math.PI * 40;
   const progress = (bounded / 100) * circumference;
@@ -39,7 +51,7 @@ export default function ReadinessGauge({ score }: Props) {
         </svg>
         <div>
           <p className={`text-3xl font-extrabold ${getBandColor(bounded)}`} data-testid="readiness-value">{bounded}</p>
-          <p className="text-xs text-gray-500">Based on HRV and yesterday sleep</p>
+          <p className="text-xs text-gray-500">Based on the latest day with both HRV and sleep measurements</p>
         </div>
       </div>
     </div>

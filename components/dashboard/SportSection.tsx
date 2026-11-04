@@ -1,5 +1,5 @@
 import MetricChart, { type MetricPoint } from "@/components/dashboard/MetricChart";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { SportSession } from "@/lib/mockData";
 import { aggregateSeries, type AggregationMode, type Granularity } from "@/lib/timeAggregation";
 
@@ -133,6 +133,7 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
   const [sortKey, setSortKey] = useState<SessionSortKey>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [showRunDrilldown, setShowRunDrilldown] = useState(false);
+  const drilldownRef = useRef<HTMLDivElement>(null);
   const [selectedRunKey, setSelectedRunKey] = useState<string>("");
   const [splitFilter, setSplitFilter] = useState("");
   const [splitSortKey, setSplitSortKey] = useState<SplitSortKey>("km");
@@ -304,19 +305,19 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
   }, [selectedRunKey, sorted]);
 
   const filteredSplits = useMemo(() => {
-    const splits = selectedRun?.splits?.length
-      ? selectedRun.splits.map((split) => ({
-          kmIndex: split.kilometer,
-          distanceKm: 1,
-          paceMinPerKm: split.paceMinutesPerKm ?? null,
-          avgHeartRate: split.averageHeartRate ?? null,
-          maxHeartRate: null,
-          durationSeconds: split.durationSeconds,
+    const splits = selectedRun?.kmSplits?.length
+      ? selectedRun.kmSplits.map((split) => ({
+          ...split,
+          durationSeconds: split.paceMinPerKm ? Math.round(split.paceMinPerKm * split.distanceKm * 60) : 0,
         }))
-      : selectedRun?.kmSplits?.length
-        ? selectedRun.kmSplits.map((split) => ({
-            ...split,
-            durationSeconds: split.paceMinPerKm ? Math.round(split.paceMinPerKm * 60) : 0,
+      : selectedRun?.splits?.length
+        ? selectedRun.splits.map((split) => ({
+            kmIndex: split.kilometer,
+            distanceKm: 1,
+            paceMinPerKm: split.paceMinutesPerKm ?? null,
+            avgHeartRate: split.averageHeartRate ?? null,
+            maxHeartRate: null,
+            durationSeconds: split.durationSeconds,
           }))
         : [];
     const q = splitFilter.trim().toLowerCase();
@@ -486,7 +487,7 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
       )}
 
       {isRunning && selectedRun && (
-        <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <div ref={drilldownRef} className="mt-5 scroll-mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <h4 className="text-sm font-semibold text-slate-900">Run Drilldown by KM</h4>
             <button
@@ -694,6 +695,9 @@ export default function SportSection({ sport, sessions, isMock, granularity, mod
                           onClick={() => {
                             setSelectedRunKey(`${s.date}-${s.startTime ?? ""}`);
                             setShowRunDrilldown(true);
+                            requestAnimationFrame(() =>
+                              drilldownRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+                            );
                           }}
                           className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
                         >

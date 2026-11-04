@@ -22,4 +22,9 @@ describe("ReadinessGauge", () => {
     render(<ReadinessGauge score={70} />);
     expect(screen.getByTestId("readiness-value")).toHaveClass("text-green-600");
   });
+
+  it("shows N/A when a complete readiness measurement is unavailable", () => {
+    render(<ReadinessGauge score={null} />);
+    expect(screen.getByTestId("readiness-value")).toHaveTextContent("N/A");
+  });
 });

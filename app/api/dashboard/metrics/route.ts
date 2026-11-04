@@ -36,7 +36,7 @@ function normalizeSportKey(raw: string | null | undefined): string | null {
 
   if (!compact) return null;
   if (compact.includes("run")) return "running";
-  if (compact.includes("padel")) return "padel";
+  if (compact.includes("padel") || compact.includes("pickleball")) return "padel";
   if (compact.includes("racketball") || compact.includes("racquetball")) return "racketball";
   if (compact.includes("walk")) return "walking";
   if (compact.includes("cycle") || compact.includes("bike")) return "cycling";
@@ -306,7 +306,9 @@ async function loadDashboardPayload(request: NextRequest): Promise<DashboardPayl
     workoutFilter.startDate = { ...(workoutFilter.startDate as Record<string, unknown> ?? {}), $lte: endDate };
   }
   if (sportType) {
-    workoutFilter.workoutType = { $regex: sportType, $options: "i" };
+    // Pickleball workouts are presented as Padel, so the "padel" filter must match both.
+    const workoutTypePattern = sportType.toLowerCase() === "padel" ? "padel|pickleball" : sportType;
+    workoutFilter.workoutType = { $regex: workoutTypePattern, $options: "i" };
   }
 
   const rawWorkouts = (await AppleHealthWorkout.find(workoutFilter)
